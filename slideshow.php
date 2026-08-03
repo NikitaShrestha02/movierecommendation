@@ -121,6 +121,7 @@ include("moviesinsertion.php");
     const slides = document.getElementsByClassName("slide");
 
     function showSlides() {
+        if (slides.length === 0) return;
         for (let i = 0; i < slides.length; i++) {
             slides[i].style.display = "none";
         }
@@ -136,6 +137,6 @@ include("moviesinsertion.php");
 </script>
 
     
-<script src="sc.js"></script>
+
 </body>
 </html>

@@ -5,6 +5,9 @@ if(!isset($_COOKIE['uemail'])) {
     die();
 }
 
+if (!isset($_SESSION['uemail']) && isset($_COOKIE['uemail'])) {
+    $_SESSION['uemail'] = $_COOKIE['uemail'];
+}
 include('connection.php');
 
 $loggedInEmail = $_SESSION['uemail'];
@@ -37,7 +40,6 @@ if ($result->num_rows > 0) {
             <?php include("upprof.php"); ?>
             <p class="subtext">Forget Password? <a href="changepassword.php">Change Password</a></p>
             <a href="logout.php" class="btn">Logout</a>
-        </div>
     </div>
 </body>
 </html>

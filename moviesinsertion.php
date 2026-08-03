@@ -16,15 +16,48 @@ try {
     $limit = 12;
 
    
-    $genreStmt = $pdo->query("SELECT DISTINCT genres FROM movies WHERE genres IS NOT NULL AND genres <> ''");
-    $genres = $genreStmt->fetchAll();
+    $genreList = [
+    "Action",
+    "Adventure",
+    "Animation",
+    "Comedy",
+    "Crime",
+    "Documentary",
+    "Drama",
+    "Family",
+    "Fantasy",
+    "History",
+    "Horror",
+    "Music",
+    "Mystery",
+    "Romance",
+    "Science Fiction",
+    "TV Movie",
+    "Thriller",
+    "War",
+    "Western"
+];
 
-    $selectedGenre = isset($_GET['genre']) ? $_GET['genre'] : '';
+    $selectedGenres = isset($_GET['genre']) ? $_GET['genre'] : [];
+    if (!is_array($selectedGenres)) {
+        $selectedGenres = ($selectedGenres !== '' && $selectedGenres !== 'all') ? [$selectedGenres] : [];
+    }
 
-    if ($selectedGenre && $selectedGenre !== 'all') {
-        $stmt = $pdo->prepare("SELECT * FROM movies WHERE genres = ? LIMIT ?");
-        $stmt->bindValue(1, $selectedGenre, PDO::PARAM_STR);
-        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+    if (!empty($selectedGenres)) {
+        $conditions = [];
+        $params = [];
+        foreach ($selectedGenres as $g) {
+            $conditions[] = "genres LIKE ?";
+            $params[] = "%" . $g . "%";
+        }
+        $sql = "SELECT * FROM movies WHERE (" . implode(" OR ", $conditions) . ") LIMIT ?";
+        $stmt = $pdo->prepare($sql);
+        
+        $paramIndex = 1;
+        foreach ($params as $p) {
+            $stmt->bindValue($paramIndex++, $p, PDO::PARAM_STR);
+        }
+        $stmt->bindValue($paramIndex, $limit, PDO::PARAM_INT);
     } else {
         $stmt = $pdo->prepare("SELECT * FROM movies LIMIT ?");
         $stmt->bindValue(1, $limit, PDO::PARAM_INT);
@@ -59,25 +92,47 @@ try {
     .filter-label {
         font-size: 18px;
         font-weight: bold;
-        margin-right: 10px;
         color: white;
+        display: block;
+        margin-bottom: 15px;
     }
 
-    .filter-select {
-        padding: 10px 15px;
-        font-size: 16px;
-        border-radius: 8px;
-        border: 1px solid #ccc;
+    .genre-bubbles {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+    }
+    .genre-bubble {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 20px;
         background-color: #f8f9fa;
-        cursor: pointer;
+        color: #333;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: bold;
+        border: 1px solid #ccc;
         transition: all 0.3s ease;
+        cursor: pointer;
     }
-
-    .filter-select:hover,
-    .filter-select:focus {
-        border-color:rgb(48, 99, 142);
-        background-color: #fff;
-        outline: none;
+    .genre-bubble:hover {
+        background-color: #e2e6ea;
+        border-color: rgb(48, 99, 142);
+    }
+    .genre-bubble.active {
+        background-color: rgb(48, 99, 142);
+        color: white;
+        border-color: rgb(48, 99, 142);
+    }
+    .clear-genre-btn {
+        background-color: #dc3545;
+        color: white;
+        border-color: #dc3545;
+    }
+    .clear-genre-btn:hover {
+        background-color: #c82333;
+        border-color: #bd2130;
     }
 
     /* Show Details button */
@@ -117,23 +172,37 @@ try {
 
     // 🔽 Genre Filter
     echo '<div class="filter-container">
-        <form method="GET">
-            <label for="genre" class="filter-label">🎬 Filter by Genre:</label>
-            <select name="genre" class="filter-select" onchange="this.form.submit()">
-                <option value="all">All</option>';
-                foreach ($genres as $genre) {
-                    $g = htmlspecialchars($genre['genres']);
-                    $selected = ($selectedGenre === $genre['genres']) ? 'selected' : '';
-                    echo "<option value=\"$g\" $selected>$g</option>";
-                }
-    echo '  </select>
-        </form>
+        <label class="filter-label">🎬 Filter by Genre:</label>
+        <div class="genre-bubbles">';
+        
+    foreach ($genreList as $genre) {
+        $isActive = in_array($genre, $selectedGenres);
+        $activeClass = $isActive ? 'active' : '';
+        
+        $newGenres = $selectedGenres;
+        if ($isActive) {
+            $newGenres = array_diff($newGenres, [$genre]);
+        } else {
+            $newGenres[] = $genre;
+        }
+        
+        $queryString = '';
+        foreach ($newGenres as $ng) {
+            $queryString .= '&genre[]=' . urlencode($ng);
+        }
+        $queryString = !empty($queryString) ? '?' . substr($queryString, 1) : '?genre=all';
+
+        echo '<a href="' . $queryString . '" class="genre-bubble ' . $activeClass . '">' . htmlspecialchars($genre) . '</a>';
+    }
+    
+    echo '<a href="?genre=all" class="genre-bubble clear-genre-btn">Clear all genre</a>';
+    echo '  </div>
     </div>';
 
     // 🔽 Movie Grid
 echo '<div class="container" id="movie-container">';
 foreach ($movies as $movie) {
-    $posterPath = !empty($movie['poster_path']) ? $movie['poster_path'] : 'images/default-poster.jpg';
+    $posterPath = !empty($movie['poster_path']) ? $movie['poster_path'] : 'default.jpg';
 
     echo '<div class="movie-poster">
             <img src="' . htmlspecialchars($posterPath) . '" alt="' . htmlspecialchars($movie['original_title']) . '">
@@ -154,13 +223,15 @@ echo '</div>';
 
     echo '<button id="loadMore">Show More</button>';
 
+    $jsGenres = json_encode($selectedGenres);
     echo '<script>
         let offset = ' . count($movies) . ';
         const button = document.getElementById("loadMore");
-        const genre = "' . htmlspecialchars($selectedGenre) . '";
+        const genres = ' . $jsGenres . ';
 
         button.addEventListener("click", function () {
-            fetch("load_more.php?offset=" + offset + "&genre=" + encodeURIComponent(genre))
+            let genreQuery = genres.map(g => "genre[]=" + encodeURIComponent(g)).join("&");
+            fetch("load_more.php?offset=" + offset + "&" + genreQuery)
                 .then(response => response.text())
                 .then(data => {
                     if (data.trim() === "") {

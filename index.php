@@ -1,6 +1,16 @@
 <?php
 session_start();
 
+if(!isset($_COOKIE['uemail']))
+{
+    header("Location: nlogin.php");
+    exit();
+}
+
+if (!isset($_SESSION['uemail']) && isset($_COOKIE['uemail'])) {
+    $_SESSION['uemail'] = $_COOKIE['uemail'];
+}
+
 $host = "localhost";
 $user = "root";
 $pass = "";
@@ -136,93 +146,9 @@ if ($conn->connect_error) {
 include("navigation.php");
 include("slideshow.php");
 
-$search = $_SESSION['last_search_keyword'] ?? '';
-
-if (strlen($search) < 2) {
-    echo '<div class="recommendations"><h1>Recommended Movies</h1><p class="no-recommendations">Search for something to see recommendations.</p></div>';
-} else {
-
-    function build_vocab($search) {
-        return array_unique(array_map('trim', explode(" ", strtolower($search))));
-    }
-
-    function vectorize($text, $vocab) {
-        $tokens = array_map('trim', preg_split("/[,\s]+/", strtolower($text)));
-        $vector = [];
-        foreach ($vocab as $word) {
-            $vector[] = in_array($word, $tokens) ? 1 : 0;
-        }
-        return $vector;
-    }
-
-    function cosine_similarity($vec1, $vec2) {
-        $dot = 0; $norm1 = 0; $norm2 = 0;
-        for ($i = 0; $i < count($vec1); $i++) {
-            $dot += $vec1[$i] * $vec2[$i];
-            $norm1 += $vec1[$i] * $vec1[$i];
-            $norm2 += $vec2[$i] * $vec2[$i];
-        }
-        if ($norm1 == 0 || $norm2 == 0) return 0;
-        return $dot / (sqrt($norm1) * sqrt($norm2));
-    }
-
-    $vocab = build_vocab($search);
-    $user_vector = vectorize(str_replace(" ", ",", $search), $vocab);
-
-    $sql = "SELECT id, original_title, genres, keywords, poster_path FROM movies";
-    $result = $conn->query($sql);
-
-    $movies = [];
-    while ($movie = $result->fetch_assoc()) {
-        $movie_text = $movie['genres'] . "," . $movie['keywords'];
-        $movie_vector = vectorize($movie_text, $vocab);
-        $score = cosine_similarity($user_vector, $movie_vector);
-
-        $poster = !empty($movie['poster_path']) ? $movie['poster_path'] : "posters/default.jpg";
-
-        $movies[] = [
-            'id' => $movie['id'],
-            'title' => $movie['original_title'],
-            'score' => $score,
-            'poster_src' => $poster
-        ];
-    }
-
-    usort($movies, function ($a, $b) {
-        return $b['score'] <=> $a['score'];
-    });
-
-    echo '<div class="recommendations"><h1>Recommended Movies for "' . htmlspecialchars($search) . '"</h1><div class="movie-container">';
-    $found = false;
-    $count = 0;
-    $limit = 10;
-
-    foreach ($movies as $movie) {
-        if ($movie['score'] > 0) {
-            $found = true;
-            $id = $movie['id'];
-            $title = htmlspecialchars($movie['title']);
-            $poster = $movie['poster_src'];
-
-            echo '<div class="movie-poster">';
-            echo "<img src='{$poster}' alt='{$title}' onerror=\"this.onerror=null;this.src='posters/default.jpg';\">";
-            echo '<div class="overlay">';
-            echo "<div class='movie-title'>{$title}</div>";
-            echo "<a href='details.php?id=" . urlencode($id) . "' class='show-details'>Show Details</a>";
-            echo '</div>';
-            echo '</div>';
-
-            $count++;
-            if ($count >= $limit) break;
-        }
-    }
-
-    if (!$found) {
-        echo "<p class='no-recommendations'>No recommendations found for your search.</p>";
-    }
-
-    echo '</div></div>';
-}
+echo '<div id="main-recommendations-container">';
+include("fetch_recommendations.php");
+echo '</div>';
 
 $conn->close();
 include("footer.php");

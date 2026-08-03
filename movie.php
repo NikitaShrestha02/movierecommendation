@@ -130,7 +130,7 @@ if (!$movie) {
 <div class="container">
     <div class="poster">
         <?php
-        $poster = !empty($movie['poster_path']) ? $movie['poster_path'] : 'images/default-poster.jpg';
+        $poster = !empty($movie['poster_path']) ? $movie['poster_path'] : 'default.jpg';
         echo '<img src="' . htmlspecialchars($poster) . '" alt="' . htmlspecialchars($movie['original_title']) . ' Poster">';
         ?>
     </div>

@@ -169,32 +169,56 @@ header ul li a:hover {
         </div>
 
         <script>
-            document.getElementById('searchInput').addEventListener('keyup', function () {
-            const keyword = this.value.trim();
+            function triggerMainSearch(keyword) {
+                // If on index.php, update instantly via AJAX
+                const mainContainer = document.getElementById('main-recommendations-container');
+                if (mainContainer) {
+                    fetch('fetch_recommendations.php?search=' + encodeURIComponent(keyword))
+                    .then(res => res.text())
+                    .then(html => {
+                        mainContainer.innerHTML = html;
+                    });
+                } else {
+                    // Not on index.php, redirect to it with search parameter
+                    window.location.href = 'index.php?search=' + encodeURIComponent(keyword);
+                }
+            }
+
+            document.getElementById('searchInput').addEventListener('keyup', function (e) {
+                const keyword = this.value.trim();
+                
+                // If user presses Enter
+                if (e.key === 'Enter') {
+                    if (keyword.length < 2) {
+                        alert("Please type at least 2 characters.");
+                        return;
+                    }
+                    document.getElementById('results').innerHTML = '';
+                    triggerMainSearch(keyword);
+                    return;
+                }
+
                 if (keyword.length < 2) {
                     document.getElementById('results').innerHTML = '';
                     return;
                 }
 
-            fetch('search_filter.php?search=' + encodeURIComponent(keyword))
-            .then(response => response.text())
-            .then(data => {
-                document.getElementById('results').innerHTML = data;
-            });
+                fetch('search_filter.php?search=' + encodeURIComponent(keyword))
+                .then(response => response.text())
+                .then(data => {
+                    document.getElementById('results').innerHTML = data;
+                });
             });
 
             document.getElementById('searchButton').addEventListener('click', function () {
-             const keyword = document.getElementById('searchInput').value.trim();
-            if (keyword.length < 2) {
-                alert("Please type at least 2 characters.");
-                return;
-            }
-
-            fetch('search_filter.php?search=' + encodeURIComponent(keyword))
-                .then(response => response.text())
-                .then(data => {
-                document.getElementById('results').innerHTML = data;
-            });
+                const keyword = document.getElementById('searchInput').value.trim();
+                if (keyword.length < 2) {
+                    alert("Please type at least 2 characters.");
+                    return;
+                }
+                
+                document.getElementById('results').innerHTML = '';
+                triggerMainSearch(keyword);
             });
         </script>
       </li>

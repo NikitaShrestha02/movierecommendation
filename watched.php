@@ -194,7 +194,7 @@ try {
             <?php foreach ($watchedMovies as $movie): ?>
                 <div class="movie-poster">
                     <a href="details.php?id=<?php echo $movie['id']; ?>" style="text-decoration:none;">
-                        <img src="<?php echo htmlspecialchars($movie['poster_path'] ?: 'images/default-poster.jpg'); ?>" alt="Poster of <?php echo htmlspecialchars($movie['original_title']); ?>">
+                        <img src="<?php echo htmlspecialchars($movie['poster_path'] ?: 'default.jpg'); ?>" alt="Poster of <?php echo htmlspecialchars($movie['original_title']); ?>">
                         <div class="movie-title"><?php echo htmlspecialchars($movie['original_title']); ?></div>
                     </a>
                 </div>
@@ -202,6 +202,46 @@ try {
         </div>
     <?php endif; ?>
 </div>
+
+<!-- KNN Recommendations Section -->
+<div class="recommendations" style="margin-top: 40px;">
+    <h2>Based on your watched movies...</h2>
+    <div id="knn-recommendations-container" class="container">
+        <p class="no-recommendations">Loading recommendations...</p>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const container = document.getElementById("knn-recommendations-container");
+        
+        fetch("knn_recommendations.php")
+            .then(response => response.json())
+            .then(data => {
+                if (!data || data.length === 0 || data.error) {
+                    container.innerHTML = "<p class='no-recommendations'>No recommendations available yet. Watch some movies first!</p>";
+                    return;
+                }
+                
+                let html = "";
+                data.forEach(movie => {
+                    html += `
+                        <div class="movie-poster">
+                            <a href="details.php?id=${encodeURIComponent(movie.movie_id)}" style="text-decoration:none;">
+                                <img src="${movie.poster}" alt="${movie.title}" onerror="this.onerror=null;this.src='default.jpg';">
+                                <div class="movie-title">${movie.title}</div>
+                            </a>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            })
+            .catch(error => {
+                console.error("Error fetching recommendations:", error);
+                container.innerHTML = "<p class='no-recommendations' style='color: #ff6b6b;'>Failed to load recommendations.</p>";
+            });
+    });
+</script>
 
 </body>
 </html>
