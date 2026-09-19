@@ -1,137 +1,113 @@
 <?php
+if (!isset($conn)) {
+    include('connection.php');
+}
 
-include('connection.php');
+$profileSuccess = '';
+$profileError = '';
 
-// Check if user is logged in
-if(isset($_SESSION['uemail'])) {
+if (isset($_SESSION['uemail'])) {
     $email = $_SESSION['uemail'];
 
-    // Fetch current user details
-    $query = "SELECT * FROM user WHERE email='$email'";
-    $result = mysqli_query($conn, $query);
+    // Handle form submission
+    if (isset($_POST['submit'])) {
+        $new_name = trim($_POST['name'] ?? '');
+        $new_address = trim($_POST['address'] ?? '');
+        $new_email = trim($_POST['email'] ?? '');
+        $new_contact = trim($_POST['contact'] ?? '');
 
-    if(mysqli_num_rows($result) == 1) {
-        $row = mysqli_fetch_assoc($result);
+        if (empty($new_name) || empty($new_email)) {
+            $profileError = "Name and Email are required fields.";
+        } else {
+            // Check if email changed and if it is unique
+            if ($new_email !== $email) {
+                $check_stmt = $conn->prepare("SELECT id FROM user WHERE email = ? AND email != ?");
+                $check_stmt->bind_param("ss", $new_email, $email);
+                $check_stmt->execute();
+                $check_res = $check_stmt->get_result();
 
-        // Initialize variables
-        $name = $row['name'];
-        $address = $row['address'];
-        $contact = $row['contact'];
-
-        // Handle form submission
-        if(isset($_POST['submit'])) {
-            // Retrieve form data
-            $new_name = $_POST['name'];
-            $new_address = $_POST['address'];
-            $new_email = $_POST['email']; // New email address
-            $new_contact = $_POST['contact'];
-
-            // Check if email needs to be updated and ensure it's unique
-            if ($new_email != $email) {
-                $check_email_query = "SELECT * FROM user WHERE email='$new_email'";
-                $check_email_result = mysqli_query($conn, $check_email_query);
-                if (mysqli_num_rows($check_email_result) > 0) {
-                    echo '<script>alert("Email address already exists. Please choose a different one.")</script>';
+                if ($check_res && $check_res->num_rows > 0) {
+                    $profileError = "The email address is already in use by another account.";
                 } else {
-                    $update_email_query = "UPDATE user SET email='$new_email' WHERE email='$email'";
-                    mysqli_query($conn, $update_email_query);
-                    $_SESSION['uemail'] = $new_email; // Update session email if changed
+                    $upd_email_stmt = $conn->prepare("UPDATE user SET email = ? WHERE email = ?");
+                    $upd_email_stmt->bind_param("ss", $new_email, $email);
+                    $upd_email_stmt->execute();
+                    $_SESSION['uemail'] = $new_email;
+                    setcookie('uemail', $new_email, time() + (86400 * 30), "/");
+                    $email = $new_email;
                 }
             }
 
-            // Update profile information except email and password
-            $update_profile_query = "UPDATE user SET name='$new_name', address='$new_address', contact='$new_contact' WHERE email='$email'";
-            mysqli_query($conn, $update_profile_query);
-            echo '<script>alert("Profile updated successfully");</script>';
-
-            // Update the current form values after submission
-            $name = $new_name;
-            $address = $new_address;
-            $contact = $new_contact;
-            // You can also update $email if it changes, but typically it's best to handle email updates separately due to validation concerns.
+            if (empty($profileError)) {
+                $upd_stmt = $conn->prepare("UPDATE user SET name = ?, address = ?, contact = ? WHERE email = ?");
+                $upd_stmt->bind_param("ssss", $new_name, $new_address, $new_contact, $email);
+                if ($upd_stmt->execute()) {
+                    $profileSuccess = "Profile updated successfully!";
+                    if (isset($userName)) {
+                        $userName = $new_name;
+                    }
+                } else {
+                    $profileError = "Failed to update profile. Please try again.";
+                }
+            }
         }
-    } else {
-        echo "User not found.";
     }
-} else {
-    header("Location: nlogin.php"); // Redirect if not logged in
-    exit();
+
+    // Always fetch latest user details
+    $user_query = $conn->prepare("SELECT * FROM user WHERE email = ?");
+    $user_query->bind_param("s", $email);
+    $user_query->execute();
+    $user_res = $user_query->get_result();
+
+    if ($user_res && $user_res->num_rows === 1) {
+        $user_row = $user_res->fetch_assoc();
+        $name = $user_row['name'];
+        $address = $user_row['address'];
+        $contact = $user_row['contact'];
+        $email = $user_row['email'];
+    }
 }
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Update Profile</title>
-<style>
-    body {
-        font-family: Arial, sans-serif;
-        background-color: #0D0E30;
-        margin: 0;
-        padding: 20px;
-        color: white;
-    }
-    .container {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 20px;
-        background-color: rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
-    }
-    form {
-        background-color: rgba(255, 255, 255, 0.2);
-        padding: 20px;
-        border-radius: 5px;
-        box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
-    }
-    input[type="text"], input[type="password"], input[type="email"] {
-        width: calc(100% - 22px); /* Adjust the width */
-        padding: 10px;
-        margin-bottom: 10px;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-    }
-    input[type="submit"] {
-        width: 100%;
-        padding: 10px 0;
-        background-color: #007bff;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        transition: background-color 0.3s;
-    }
-    input[type="submit"]:hover {
-        background-color: #0056b3;
-    }
-    .sub-text {
-        color: #ccc;
-        text-align: center;
-        margin-top: 10px;
-    }
-</style>
-</head>
-<body>
-<div class="container">
-    <h2>Update Profile</h2>
+<div class="profile-form-wrapper">
+    <?php if (!empty($profileSuccess)): ?>
+        <div class="dash-alert dash-alert-success">
+            <?php echo htmlspecialchars($profileSuccess); ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!empty($profileError)): ?>
+        <div class="dash-alert dash-alert-error">
+            <?php echo htmlspecialchars($profileError); ?>
+        </div>
+    <?php endif; ?>
+
     <form action="" method="post">
-        <p>Name<br>
-            <input type="text" name="name" value="<?php echo htmlspecialchars($name); ?>" required>
-        </p>
-        <p>Address<br>
-            <input type="text" name="address" value="<?php echo htmlspecialchars($address); ?>" required>
-        </p>
-        <p>Email<br>
-            <input type="email" name="email" value="<?php echo htmlspecialchars($email); ?>" required>
-        </p>
-        <p>Contact<br>
-            <input type="text" name="contact" value="<?php echo htmlspecialchars($contact); ?>" required>
-        </p>
-        <input type="submit" name="submit" value="Save Changes">
+        <div class="form-row">
+            <div class="form-group">
+                <label class="dash-label">Full Name</label>
+                <input type="text" name="name" class="dash-input" value="<?php echo htmlspecialchars($name ?? ''); ?>" required>
+            </div>
+            <div class="form-group">
+                <label class="dash-label">Email Address</label>
+                <input type="email" name="email" class="dash-input" value="<?php echo htmlspecialchars($email ?? ''); ?>" required>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label class="dash-label">Contact Number</label>
+                <input type="text" name="contact" class="dash-input" value="<?php echo htmlspecialchars($contact ?? ''); ?>" required>
+            </div>
+            <div class="form-group">
+                <label class="dash-label">Address / Location</label>
+                <input type="text" name="address" class="dash-input" value="<?php echo htmlspecialchars($address ?? ''); ?>" required>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <input type="submit" name="submit" value="Save Changes" class="btn btn-primary">
+        </div>
     </form>
 </div>
-</body>
-</html>
+

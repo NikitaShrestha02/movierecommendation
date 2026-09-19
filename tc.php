@@ -1,8 +1,11 @@
 <?php
 session_start();
-if(!isset($_COOKIE['uemail'])) {
+if (!isset($_COOKIE['uemail'])) {
     header('location: nlogin.php');
     die();
+}
+if (!isset($_SESSION['uemail']) && isset($_COOKIE['uemail'])) {
+    $_SESSION['uemail'] = $_COOKIE['uemail'];
 }
 ?>
 <!DOCTYPE html>
@@ -10,97 +13,178 @@ if(!isset($_COOKIE['uemail'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Movie Recommendation System</title>
+    <title>Terms &amp; Conditions - Movie Recommendation</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            background-color: #0D0E30; 
-            
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0f141c;
+            color: #cbd5e1;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
 
-        .container {
-            max-width: 800px; 
-            margin: auto; 
-            padding: 20px; 
-            background-color: #0b0b3e; 
-            border-radius: 8px; 
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); 
-           
+        .page-container {
+            max-width: 960px;
+            width: 100%;
+            margin: 36px auto;
+            padding: 0 20px;
+            flex: 1;
         }
 
-        section#faqs {
-            margin-top: 20px; 
+        .header-card {
+            background-color: #181f2c;
+            border: 1px solid #242e40;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+            padding: 32px;
+            margin-bottom: 28px;
         }
 
-        section#faqs h2 {
-            color: white; 
-            font-size: 24px;
-            margin-bottom: 10px;
-            text-align: center;
-        }
-         section#faqs h3 {
-            color: white; 
-            font-size: 24px;
-            margin-bottom: 10px;
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #60a5fa;
+            background-color: rgba(37, 99, 235, 0.12);
+            border: 1px solid rgba(96, 165, 250, 0.25);
+            padding: 4px 10px;
+            border-radius: 4px;
+            margin-bottom: 12px;
         }
 
-        section#faqs p {
-            color: white; 
+        .page-title {
+            color: #f8fafc;
+            font-size: 26px;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+            letter-spacing: -0.01em;
+        }
+
+        .page-desc {
+            color: #94a3b8;
+            font-size: 15px;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        .terms-content {
+            background-color: #181f2c;
+            border: 1px solid #242e40;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .term-section {
+            border-bottom: 1px solid #242e40;
+            padding-bottom: 20px;
+        }
+
+        .term-section:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .term-heading {
+            color: #f8fafc;
             font-size: 16px;
-            line-height: 1.5;
-            margin-bottom: 10px;
+            font-weight: 600;
+            margin: 0 0 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        section#faqs ul {
-            color: white; 
-            font-size: 16px;
-            line-height: 1.5;
-            padding-left: 20px; 
+        .term-number {
+            color: #60a5fa;
+            font-weight: 700;
         }
 
-        section#faqs ul li {
-            margin-bottom: 5px; 
+        .term-body {
+            color: #94a3b8;
+            font-size: 14px;
+            line-height: 1.65;
+            margin: 0;
         }
-        body, html {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
+
+        .term-body a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
+
+        .term-body a:hover {
+            text-decoration: underline;
+        }
     </style>
-<?php include("navigation.php");?>
 </head>
 <body>
-  <div class="container">
-   <section id="faqs">
-  <h2>Terms and Conditions</h2>
 
-  <p>Welcome to our movie recommendation platform. By using our services, you agree to the following terms and conditions. Please read them carefully.</p>
+<?php include("navigation.php"); ?>
 
-  <h3>1. Use of the Service</h3>
-  <p>You agree to use our platform only for lawful purposes and in a way that does not infringe the rights of others or restrict their use and enjoyment of the service.</p>
+<div class="page-container">
+    <div class="header-card">
+        <span class="badge">Legal &amp; Policies</span>
+        <h1 class="page-title">Terms and Conditions</h1>
+        <p class="page-desc">Please review these terms governing your use of our movie recommendation service and personal watchlist features.</p>
+    </div>
 
-  <h3>2. Account Registration</h3>
-  <p>To access personalized recommendations features, you must create an account and provide accurate, complete information. You are responsible for maintaining the confidentiality of your account credentials.</p>
+    <div class="terms-content">
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">1.</span> Use of the Service</h3>
+            <p class="term-body">You agree to use our platform solely for personal and lawful purposes, adhering to community standards and applicable regulations without infringing upon others' enjoyment.</p>
+        </div>
 
-  <h3>3. Movie Recommendations</h3>
-  <p>Our recommendation system provides suggestions based on your preferences and search history. Recommendations are for guidance only, and we do not guarantee satisfaction with all suggested movies.</p>
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">2.</span> Account Registration &amp; Security</h3>
+            <p class="term-body">To save watched films and receive calibrated recommendations, you must maintain an active account with accurate information and keep your credentials confidential.</p>
+        </div>
 
-  <h3>4. Intellectual Property</h3>
-  <p>All content on this platform, including logos, text, images, and software, is owned by or licensed to us and is protected by intellectual property laws. You may not use any content without prior written permission.</p>
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">3.</span> Recommendation Methodology</h3>
+            <p class="term-body">Our platform uses statistical similarity calculations (including K-Nearest Neighbors vector analysis) to provide suggestions. These recommendations serve as curated discovery guidance and do not guarantee personal subjective satisfaction.</p>
+        </div>
 
-  <h3>5. Limitation of Liability</h3>
-  <p>We are not liable for any direct or indirect damages resulting from the use or inability to use our platform, including errors in recommendations, search error, or service interruptions.</p>
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">4.</span> Intellectual Property</h3>
+            <p class="term-body">All platform software, user interface styling, logos, and catalog presentations are protected by copyright and intellectual property laws. Unauthorized reproduction or scraping is prohibited.</p>
+        </div>
 
-  <h3>6. Privacy</h3>
-  <p>Your privacy is important to us. Please review our Privacy Policy to understand how we collect, use, and protect your information.</p>
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">5.</span> Limitation of Liability</h3>
+            <p class="term-body">The service is provided on an "as is" basis. We are not liable for incidental service interruptions, catalog inaccuracies, or third-party metadata discrepancies.</p>
+        </div>
 
-  <h3>7. Changes to Terms</h3>
-  <p>We reserve the right to update these terms at any time. Continued use of the platform after changes implies acceptance of the new terms.</p>
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">6.</span> Privacy &amp; Data Handling</h3>
+            <p class="term-body">Your ratings and genre selections are stored securely to calculate recommendations. We do not sell or disclose your personal data to external advertisers.</p>
+        </div>
 
-  <h3>8. Contact Us</h3>
-  <p>If you have any questions about these terms, please contact our support team.</p>
-</section>
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">7.</span> Policy Updates</h3>
+            <p class="term-body">We reserve the right to periodically revise these terms to reflect new algorithmic features or legal guidelines. Continued use signifies agreement to modified terms.</p>
+        </div>
 
+        <div class="term-section">
+            <h3 class="term-heading"><span class="term-number">8.</span> Inquiries &amp; Support</h3>
+            <p class="term-body">If you have any questions regarding these terms, please feel free to <a href="contact.php">contact our support team</a>.</p>
+        </div>
+    </div>
+</div>
+
+<?php include("footer.php"); ?>
 
 </body>
 </html>
+

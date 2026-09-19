@@ -74,93 +74,78 @@ try {
         <style>
     #loadMore {
         display: block;
-        margin: 20px auto;
-        padding: 10px 20px;
-        font-size: 16px;
-        background-color: #007bff;
-        color: white;
-        border: none;
-        border-radius: 5px;
+        margin: 28px auto;
+        padding: 9px 22px;
+        font-size: 14px;
+        font-weight: 600;
+        background-color: #1e2637;
+        color: #cbd5e1;
+        border: 1px solid #2d384c;
+        border-radius: 6px;
         cursor: pointer;
+        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    }
+    #loadMore:hover {
+        background-color: #2563eb;
+        color: #ffffff;
+        border-color: #2563eb;
     }
 
     .filter-container {
         text-align: center;
-        margin: 30px 0;
+        margin: 24px auto;
+        max-width: 1200px;
+        padding: 0 16px;
     }
 
     .filter-label {
-        font-size: 18px;
-        font-weight: bold;
-        color: white;
+        font-size: 14px;
+        font-weight: 600;
+        color: #94a3b8;
         display: block;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
+        letter-spacing: 0.02em;
     }
 
     .genre-bubbles {
         display: flex;
         flex-wrap: wrap;
         justify-content: center;
-        gap: 10px;
+        gap: 8px;
     }
     .genre-bubble {
         display: inline-block;
-        padding: 8px 16px;
-        border-radius: 20px;
-        background-color: #f8f9fa;
-        color: #333;
+        padding: 6px 13px;
+        border-radius: 6px;
+        background-color: #1a2230;
+        color: #cbd5e1;
         text-decoration: none;
-        font-size: 14px;
-        font-weight: bold;
-        border: 1px solid #ccc;
-        transition: all 0.3s ease;
+        font-size: 13px;
+        font-weight: 500;
+        border: 1px solid #2d384c;
+        transition: all 0.2s ease;
         cursor: pointer;
     }
     .genre-bubble:hover {
-        background-color: #e2e6ea;
-        border-color: rgb(48, 99, 142);
+        background-color: #243044;
+        color: #ffffff;
+        border-color: #3b82f6;
     }
     .genre-bubble.active {
-        background-color: rgb(48, 99, 142);
-        color: white;
-        border-color: rgb(48, 99, 142);
+        background-color: #2563eb;
+        color: #ffffff;
+        border-color: #2563eb;
     }
     .clear-genre-btn {
-        background-color: #dc3545;
-        color: white;
-        border-color: #dc3545;
+        background-color: #451a1a;
+        color: #fca5a5;
+        border-color: #7f1d1d;
     }
     .clear-genre-btn:hover {
-        background-color: #c82333;
-        border-color: #bd2130;
+        background-color: #7f1d1d;
+        color: #ffffff;
+        border-color: #991b1b;
     }
-
-    /* Show Details button */
-    .show-details {
-        background-color:rgb(78, 107, 221);
-        color: white;
-        border: none;
-        padding: 10px 18px;
-        border-radius: 5px;
-        cursor: pointer;
-        font-weight: 600;
-        font-size: 14px;
-        transition: background-color 0.3s ease, box-shadow 0.3s ease;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
-    }
-
-    .show-details:hover {
-        background-color: #218838;
-        box-shadow: 0 4px 8px rgba(33, 136, 56, 0.4);
-    }
-
-    .show-details:focus {
-        outline: none;
-        box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.5);
-    }
-        .movie-title{
-        font-size: 20px;
-}
 </style>
 
     </head>

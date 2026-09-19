@@ -5,9 +5,11 @@ $user = "root";
 $pass = "";
 $db   = "movie_db";
 
-$conn = new mysqli($host, $user, $pass, $db);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+if (!isset($conn) || !($conn instanceof mysqli)) {
+    $conn = new mysqli($host, $user, $pass, $db);
+    if ($conn->connect_error) {
+        die("Connection failed: " . $conn->connect_error);
+    }
 }
 
 $search = $_GET['search'] ?? ($_SESSION['last_search_keyword'] ?? '');
@@ -108,5 +110,12 @@ if (strlen($search) < 2) {
     echo '</div></div>';
 }
 
-$conn->close();
+// Only close connection if called standalone via AJAX (not included in parent script)
+if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'fetch_recommendations.php') {
+    if (isset($conn) && $conn instanceof mysqli) {
+        try {
+            @$conn->close();
+        } catch (Throwable $e) {}
+    }
+}
 ?>
