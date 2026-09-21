@@ -1,4 +1,3 @@
-
 <?php
 session_start();
 
@@ -16,16 +15,6 @@ $options = [
 
 try {
     $pdo = new PDO($dsn, $user, $pass, $options);
-
-    // Schema guard: Ensure 'rating' column exists in watched_movies table
-    try {
-        $colCheck = $pdo->query("SHOW COLUMNS FROM watched_movies LIKE 'rating'");
-        if ($colCheck->rowCount() === 0) {
-            $pdo->exec("ALTER TABLE watched_movies ADD COLUMN rating INT NULL DEFAULT NULL");
-        }
-    } catch (Exception $e) {
-        // Table or column already ready
-    }
 
     // Fetch movie by ID
     $movieId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
@@ -46,6 +35,8 @@ try {
     $isWatched = false;
     $currentRating = 0;
     $statusMessage = '';
+    $justWatchedId = 0;
+    $justWatchedRating = 0;
 
     // Check user watch & rating status if logged in
     if ($userEmail) {
@@ -79,10 +70,26 @@ try {
                 } else {
                     $inStmt = $pdo->prepare("INSERT INTO watched_movies (user_id, movies_id, rating) VALUES (?, ?, ?)");
                     $inStmt->execute([$userId, $movieId, $submittedRating]);
-                    $statusMessage = $submittedRating !== null 
+                    $statusMessage = $submittedRating !== null
                         ? "Saved to watched list with a {$submittedRating}-star rating!"
                         : "Marked as watched!";
+                    $newlyWatched = true;
                 }
+
+                // Post/Redirect/Get: without this, refreshing the page
+                // re-submits the form. The query flag tells the page to
+                // open the "you just watched this" popup once.
+                $redirect = 'details.php?id=' . $movieId;
+                if (!empty($newlyWatched)) {
+                    $redirect .= '&just_watched=1';
+                    if ($submittedRating !== null) {
+                        $redirect .= '&r=' . $submittedRating;
+                    }
+                } else {
+                    $redirect .= '&saved=1';
+                }
+                header('Location: ' . $redirect);
+                exit;
             }
 
             // Refresh watch & rating status
@@ -92,6 +99,15 @@ try {
             if ($watchedRow !== false) {
                 $isWatched = true;
                 $currentRating = !empty($watchedRow['rating']) ? (int)$watchedRow['rating'] : 0;
+            }
+
+            // Popup trigger, set by the redirect above
+            if (isset($_GET['just_watched']) && $isWatched) {
+                $justWatchedId     = $movieId;
+                $justWatchedRating = $currentRating;
+            }
+            if (isset($_GET['saved'])) {
+                $statusMessage = $statusMessage ?: 'Your rating has been saved.';
             }
         }
     }
@@ -494,6 +510,9 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 });
 </script>
+
+
+<?php include("watched_popup.php"); ?>
 
 </body>
 </html>

@@ -1,226 +1,310 @@
 <?php
-error_reporting(0); // Suppress warnings that could break JSON output
-// Session check matching userdash.php and index.php
-if (session_status() === PHP_SESSION_NONE) { session_start(); }
-
-if (!isset($_SESSION['uemail']) && isset($_COOKIE['uemail'])) {
-    $_SESSION['uemail'] = $_COOKIE['uemail'];
-}
-
-if (!isset($_SESSION['uemail'])) {
-    header('Content-Type: application/json');
-    echo json_encode([]);
-    exit;
-}
-
-include('connection.php');
-if ($conn->connect_error) {
-    die(json_encode(['error' => 'Connection failed: ' . $conn->connect_error]));
-}
-
-// Schema guard: Ensure 'rating' column exists in watched_movies table
-$colCheck = $conn->query("SHOW COLUMNS FROM watched_movies LIKE 'rating'");
-if ($colCheck && $colCheck->num_rows === 0) {
-    $conn->query("ALTER TABLE watched_movies ADD COLUMN rating INT NULL DEFAULT NULL");
-}
-
-$userEmail = $_SESSION['uemail'];
-
-// Get user ID
-$stmt = $conn->prepare("SELECT id FROM user WHERE email = ?");
-$stmt->bind_param("s", $userEmail);
-$stmt->execute();
-$result = $stmt->get_result();
-if ($result->num_rows === 0) {
-    echo json_encode([]);
-    exit;
-}
-$userRow = $result->fetch_assoc();
-$userId = $userRow['id'];
-$stmt->close();
-
-// Fetch watched movies and their details along with user ratings
-$watched_sql = "
-    SELECT m.*, wm.rating AS user_rating
-    FROM watched_movies wm
-    JOIN movies m ON wm.movies_id = m.id
-    WHERE wm.user_id = ?
-";
-$stmt = $conn->prepare($watched_sql);
-$stmt->bind_param("i", $userId);
-$stmt->execute();
-$watched_result = $stmt->get_result();
-
-$watched_movies = [];
-$watched_movie_ids = [];
-while ($row = $watched_result->fetch_assoc()) {
-    $watched_movies[] = $row;
-    $watched_movie_ids[] = $row['id'];
-}
-$stmt->close();
-
-if (empty($watched_movies)) {
-    echo json_encode([]); // No watched movies, can't compute centroid
-    exit;
-}
-
 /**
- * Helper: Safely extracts TMDb rating from the movie array and normalizes it to a 0-1 scale.
- * Assumes a 0-10 rating scale.
+ * knn_recommendations.php
+ * ---------------------------------------------------------------
+ * JSON endpoint returning personalised recommendations.
+ *
+ *   GET knn_recommendations.php              -> profile-based
+ *   GET knn_recommendations.php?mood=Happy   -> filtered by mood
+ *   GET knn_recommendations.php?mood=all     -> clears the mood
+ *
+ * Algorithm: item-based KNN over TF-IDF vectors of genres+keywords.
+ * For each candidate we find the K watched films most similar to it
+ * and sum their rating weights times similarity. See knn_lib.php.
+ * ---------------------------------------------------------------
  */
-function get_rating_norm($movie) {
-    $r = $movie['rating'] ?? $movie['vote_average'] ?? $movie['average_rating'] ?? 0;
-    return floatval($r) / 10.0; 
+
+// Log errors instead of hiding them. Warnings would corrupt the JSON
+// body, so display is off -- but they still reach the error log, which
+// is how you find out a column is missing instead of silently getting
+// zeros forever.
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
-// ---------------------------------------------------------
-// 1. Build a shared genre vocabulary from ALL distinct genres
-// ---------------------------------------------------------
-$vocab = [];
-$all_genres_sql = "SELECT genres FROM movies WHERE genres IS NOT NULL AND genres != ''";
-$all_genres_res = $conn->query($all_genres_sql);
-while ($row = $all_genres_res->fetch_assoc()) {
-    $tokens = array_map('trim', preg_split("/[,\s]+/", strtolower((string)$row['genres']), -1, PREG_SPLIT_NO_EMPTY));
-    foreach ($tokens as $token) {
-        if (!in_array($token, $vocab)) {
-            $vocab[] = $token;
+header('Content-Type: application/json; charset=utf-8');
+
+/** Always emit valid JSON, even on failure. */
+function knn_json($payload, int $status = 200): void
+{
+    http_response_code($status);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// ---------------------------------------------------------------
+// Authentication
+//
+// NOTE: the previous version fell back to $_COOKIE['uemail'] when the
+// session was missing. A cookie is client-controlled, so anyone could
+// set it to another user's email and read that user's taste profile.
+// The session is the only thing trusted here.
+// ---------------------------------------------------------------
+if (empty($_SESSION['uemail'])) {
+    knn_json([]);
+}
+
+require_once __DIR__ . '/knn_lib.php';
+include __DIR__ . '/connection.php';
+
+if (!isset($conn) || $conn->connect_error) {
+    error_log('KNN: DB connection failed');
+    knn_json(['error' => 'Service unavailable'], 503);
+}
+$conn->set_charset('utf8mb4');
+
+// ---------------------------------------------------------------
+// Mood handling
+// ---------------------------------------------------------------
+$moodMap = [
+    'happy'       => ['comedy', 'animation', 'family', 'music'],
+    'relaxed'     => ['animation', 'family', 'music', 'comedy', 'tv movie'],
+    'sad'         => ['drama', 'romance'],
+    'excited'     => ['action', 'thriller', 'adventure', 'science fiction', 'mystery'],
+    'romantic'    => ['romance', 'drama', 'comedy'],
+    'adventurous' => ['adventure', 'action', 'fantasy', 'science fiction'],
+    'thoughtful'  => ['mystery', 'documentary', 'history', 'drama', 'science fiction'],
+    'chill'       => ['comedy', 'animation', 'family', 'fantasy'],
+];
+
+$moodParam = isset($_GET['mood'])
+    ? strtolower(trim($_GET['mood']))
+    : strtolower(trim($_SESSION['user_mood'] ?? ''));
+
+$activeMoodKey = '';
+$moodGenres    = [];
+
+if ($moodParam === 'all' || $moodParam === 'reset') {
+    unset($_SESSION['user_mood']);
+} elseif (isset($moodMap[$moodParam])) {
+    $activeMoodKey           = $moodParam;
+    $moodGenres              = $moodMap[$moodParam];
+    $_SESSION['user_mood']   = $moodParam;
+}
+
+// ---------------------------------------------------------------
+// User profile
+// ---------------------------------------------------------------
+$stmt = $conn->prepare("SELECT id, preferred_genres FROM user WHERE email = ?");
+$stmt->bind_param('s', $_SESSION['uemail']);
+$stmt->execute();
+$userRow = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+if (!$userRow) {
+    knn_json([]);
+}
+
+$userId     = (int) $userRow['id'];
+$prefGenres = knn_split_names($userRow['preferred_genres'] ?? '');
+
+// ---------------------------------------------------------------
+// Watched films with their star ratings
+// ---------------------------------------------------------------
+$watched      = [];
+$watchedTitle = [];
+
+$stmt = $conn->prepare(
+    "SELECT m.id, m.original_title, m.genres, wm.rating
+       FROM watched_movies wm
+       JOIN movies m ON wm.movies_id = m.id
+      WHERE wm.user_id = ?"
+);
+$stmt->bind_param('i', $userId);
+$stmt->execute();
+$res = $stmt->get_result();
+
+$highRatedGenres = [];
+$watchlistGenres = [];
+
+while ($row = $res->fetch_assoc()) {
+    $id = (int) $row['id'];
+    $watched[] = ['id' => $id, 'rating' => $row['rating']];
+    $watchedTitle[$id] = $row['original_title'];
+
+    foreach (knn_split_names($row['genres']) as $g) {
+        $watchlistGenres[$g] = true;
+        if ((float) $row['rating'] >= 4.0) {
+            $highRatedGenres[$g] = true;
         }
     }
 }
+$stmt->close();
 
-// Ensure vocabulary is not completely empty
-if (empty($vocab)) {
-    echo json_encode([]);
-    exit;
+// ---------------------------------------------------------------
+// Score
+// ---------------------------------------------------------------
+try {
+    $model = knn_build_model($conn);
+} catch (Throwable $e) {
+    error_log('KNN model build failed: ' . $e->getMessage());
+    knn_json(['error' => 'Could not build recommendation model'], 500);
 }
+
+if (empty($model['vectors'])) {
+    knn_json([]);
+}
+
+// ---------------------------------------------------------------
+// Two-tier output.
+//
+// TOP_PICKS are the highest scoring films, always in the same order:
+// these are the algorithm's actual answer and must not move around.
+//
+// EXTRA_PICKS are sampled from the rest of a wider pool. Films ranked
+// 6th and 30th usually differ by a small margin, so any of them is a
+// defensible suggestion -- rotating them keeps the page fresh without
+// degrading the recommendation.
+//
+// The shuffle is seeded with the user id and today's date, so the list
+// is stable all day for that user and changes tomorrow. Reloading the
+// page does not reshuffle, which would look broken.
+// ---------------------------------------------------------------
+const TOP_PICKS   = 5;
+const EXTRA_PICKS = 5;
+const POOL_SIZE   = 30;
+
+$ranked = knn_recommend($model, $watched, [
+    'moodGenres'      => $moodGenres,
+    'preferredGenres' => $prefGenres,
+    'limit'           => POOL_SIZE,
+]);
+
+if (!$ranked) {
+    knn_json([]);
+}
+
+$top  = array_slice($ranked, 0, TOP_PICKS);
+$rest = array_slice($ranked, TOP_PICKS);
+
+if ($rest) {
+    // Seeded so the rotation is deterministic per user per day.
+    mt_srand(crc32($userId . '|' . $activeMoodKey . '|' . date('Y-m-d')));
+
+    // Fisher-Yates using the seeded generator. shuffle() ignores the
+    // seed on PHP 7.1+, so it cannot be used here.
+    for ($i = count($rest) - 1; $i > 0; $i--) {
+        $j = mt_rand(0, $i);
+        [$rest[$i], $rest[$j]] = [$rest[$j], $rest[$i]];
+    }
+
+    // Put the sampled extras back in score order so the row still
+    // reads best-first rather than looking arbitrary.
+    $rest = array_slice($rest, 0, EXTRA_PICKS);
+    usort($rest, fn($a, $b) => ($b['score'] <=> $a['score']) ?: ($a['id'] <=> $b['id']));
+}
+
+// Tag each result so the front end can render two sections
+foreach ($top as $i => $_) {
+    $top[$i]['section'] = 'top';
+}
+foreach ($rest as $i => $_) {
+    $rest[$i]['section'] = 'more';
+}
+
+$ranked = array_merge($top, $rest);
+
+// ---------------------------------------------------------------
+// Hydrate with display data
+// ---------------------------------------------------------------
+$ids   = array_column($ranked, 'id');
+$place = implode(',', array_fill(0, count($ids), '?'));
+
+$stmt = $conn->prepare(
+    "SELECT id, original_title, poster_path, genres FROM movies WHERE id IN ($place)"
+);
+$stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
+$stmt->execute();
+$res = $stmt->get_result();
+
+$details = [];
+while ($row = $res->fetch_assoc()) {
+    $details[(int) $row['id']] = $row;
+}
+$stmt->close();
 
 /**
- * Helper: Build Feature Vector.
- * Vector X = [g_1, g_2, ..., g_N, rating_norm] where g_i is 1 if present, else 0
+ * Explain the recommendation, preferring the most specific reason.
+ * The nearest-neighbour explanation is the honest one: that film
+ * genuinely drove the score.
  */
-function build_feature_vector($genres_str, $rating_norm, $vocab) {
-    $tokens = array_map('trim', preg_split("/[,\s]+/", strtolower((string)$genres_str), -1, PREG_SPLIT_NO_EMPTY));
-    $vector = [];
-    foreach ($vocab as $word) {
-        $vector[] = in_array($word, $tokens) ? 1.0 : 0.0;
+function knn_explain(
+    array $rec,
+    array $watchedTitle,
+    array $movieGenres,
+    string $activeMoodKey,
+    array $moodGenres,
+    array $highRatedGenres,
+    array $watchlistGenres,
+    array $prefGenres
+): string {
+    if (!empty($rec['neighbour_id']) && isset($watchedTitle[$rec['neighbour_id']])) {
+        return 'Because you watched ' . $watchedTitle[$rec['neighbour_id']];
     }
-    // Append normalized TMDb rating dimension at the end
-    $vector[] = $rating_norm;
-    return $vector;
-}
 
-// ---------------------------------------------------------
-// 2. Compute WEIGHTED CENTROID vector for watched movies
-// ---------------------------------------------------------
-// Incorporates the user rating system: movies with higher user ratings (e.g. 5 stars)
-// contribute with significantly higher weight to the preference centroid.
-$num_dims = count($vocab) + 1; // +1 for the appended rating dimension
-$centroid = array_fill(0, $num_dims, 0.0);
-$total_user_weight = 0.0;
-$watched_profiles = [];
-
-foreach ($watched_movies as $wm) {
-    $raw_user_rating = !empty($wm['user_rating']) ? floatval($wm['user_rating']) : 3.0;
-    // Normalize user rating to a weight factor (5★ -> 1.0, 4★ -> 0.8, 3★ -> 0.6, 2★ -> 0.35, 1★ -> 0.15)
-    $weight = max(0.15, $raw_user_rating / 5.0);
-    $total_user_weight += $weight;
-
-    $rating_norm = get_rating_norm($wm);
-    $vec = build_feature_vector($wm['genres'], $rating_norm, $vocab);
-
-    $watched_profiles[] = [
-        'vector' => $vec,
-        'user_rating' => $raw_user_rating
-    ];
-
-    for ($i = 0; $i < $num_dims; $i++) {
-        $centroid[$i] += $vec[$i] * $weight;
-    }
-}
-
-// Normalize each dimension sum by the total user weight
-if ($total_user_weight > 0) {
-    for ($i = 0; $i < $num_dims; $i++) {
-        $centroid[$i] = $centroid[$i] / $total_user_weight;
-    }
-}
-
-// ---------------------------------------------------------
-// 3. Configurable Weight Multiplier for TMDb Rating Dimension
-// ---------------------------------------------------------
-$ratingWeight = 1.0; 
-
-// Retrieve all unwatched movies (exclude movies in watched list)
-$unwatched_sql = "SELECT * FROM movies WHERE id NOT IN (" . implode(',', $watched_movie_ids) . ")";
-$unwatched_res = $conn->query($unwatched_sql);
-
-$recommendations = [];
-while ($movie = $unwatched_res->fetch_assoc()) {
-    $rating_norm = get_rating_norm($movie);
-    $movie_vec = build_feature_vector($movie['genres'], $rating_norm, $vocab);
-    
-    // ---------------------------------------------------------
-    // 4. Compute Euclidean distance between Centroid and Unwatched Movie
-    // ---------------------------------------------------------
-    $sum_sq = 0.0;
-    for ($i = 0; $i < count($vocab); $i++) {
-        $sum_sq += pow($centroid[$i] - $movie_vec[$i], 2);
-    }
-    
-    $rating_idx = $num_dims - 1;
-    $sum_sq += $ratingWeight * pow($centroid[$rating_idx] - $movie_vec[$rating_idx], 2);
-    $distance = sqrt($sum_sq);
-
-    // ---------------------------------------------------------
-    // 5. Predict Rating via KNN Regression against Watched Movies
-    // ---------------------------------------------------------
-    // Uses distance-weighted average of user's ratings for watched movies
-    $weighted_rating_sum = 0.0;
-    $inv_dist_sum = 0.0;
-
-    foreach ($watched_profiles as $wp) {
-        $w_sum_sq = 0.0;
-        for ($i = 0; $i < count($vocab); $i++) {
-            $w_sum_sq += pow($wp['vector'][$i] - $movie_vec[$i], 2);
+    if ($activeMoodKey !== '') {
+        foreach ($movieGenres as $g) {
+            if (in_array($g, $moodGenres, true)) {
+                return "Fits your '" . ucfirst($activeMoodKey) . "' mood";
+            }
         }
-        $w_sum_sq += $ratingWeight * pow($wp['vector'][$rating_idx] - $movie_vec[$rating_idx], 2);
-        $w_dist = sqrt($w_sum_sq);
-
-        $inv_dist = 1.0 / ($w_dist + 0.05);
-        $weighted_rating_sum += $inv_dist * $wp['user_rating'];
-        $inv_dist_sum += $inv_dist;
     }
 
-    $predicted_rating = 3.5;
-    if ($inv_dist_sum > 0) {
-        $predicted_rating = $weighted_rating_sum / $inv_dist_sum;
+    foreach ($movieGenres as $g) {
+        if (isset($highRatedGenres[$g])) {
+            return 'You rated similar ' . ucwords($g) . ' films highly';
+        }
     }
-    $predicted_rating = round(min(5.0, max(1.0, $predicted_rating)), 1);
-    
-    $poster = !empty($movie['poster_path']) ? $movie['poster_path'] : "default.jpg";
-    $raw_rating = $movie['rating'] ?? $movie['vote_average'] ?? $movie['average_rating'] ?? 0;
-    
-    $recommendations[] = [
-        'movie_id' => $movie['id'],
-        'title' => $movie['original_title'],
-        'poster' => $poster,
-        'rating' => floatval($raw_rating),
-        'predicted_rating' => $predicted_rating,
-        'distance_score' => round($distance, 4)
+    foreach ($movieGenres as $g) {
+        if (isset($watchlistGenres[$g])) {
+            return 'Similar to films in your watched list';
+        }
+    }
+    foreach ($movieGenres as $g) {
+        if (in_array($g, $prefGenres, true)) {
+            return 'Matches your preferred genres (' . ucwords($g) . ')';
+        }
+    }
+    return 'Closely matches your viewing profile';
+}
+
+// Normalise scores to a 0-100 match percentage for display.
+// Based on the best score overall, so an "Also for you" card honestly
+// shows a lower percentage than a top pick.
+$maxScore = max(array_column($ranked, 'score')) ?: 1.0;
+$rank = 0;
+
+$out = [];
+foreach ($ranked as $rec) {
+    $id = $rec['id'];
+    if (!isset($details[$id])) {
+        continue;
+    }
+    $d           = $details[$id];
+    $movieGenres = knn_split_names($d['genres']);
+
+    $out[] = [
+        'rank'             => ++$rank,
+        'section'          => $rec['section'],
+        'section_label'    => $rec['section'] === 'top' ? 'Top pick' : 'Also for you',
+        'movie_id'         => $id,
+        'title'            => $d['original_title'],
+        'poster'           => !empty($d['poster_path']) ? $d['poster_path'] : 'default.jpg',
+        'genres'           => implode(', ', array_map('ucwords', $movieGenres)),
+        'predicted_rating' => $rec['predicted_rating'],
+        'match_percent'    => (int) round(100 * $rec['score'] / $maxScore),
+        'score'            => $rec['score'],
+        'explanation'      => knn_explain(
+            $rec, $watchedTitle, $movieGenres, $activeMoodKey,
+            $moodGenres, $highRatedGenres, $watchlistGenres, $prefGenres
+        ),
+        'mood'             => $activeMoodKey !== '' ? ucfirst($activeMoodKey) : null,
     ];
 }
 
-// ---------------------------------------------------------
-// 6. Select K=10 smallest distance movies
-// ---------------------------------------------------------
-usort($recommendations, function ($a, $b) {
-    return $a['distance_score'] <=> $b['distance_score'];
-});
-
-// Take top K=10
-$top_k = array_slice($recommendations, 0, 10);
-
-header('Content-Type: application/json');
-echo json_encode($top_k);
 $conn->close();
-?>
+knn_json($out);

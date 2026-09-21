@@ -48,6 +48,27 @@ if ($statsStmt) {
     }
 }
 
+// Watched films, newest first -- this panel moved here from watched.php,
+// which is now the recommendations page.
+$watchedMovies = [];
+$watchedStmt = $conn->prepare(
+    "SELECT m.id, m.original_title, m.poster_path, m.genres, m.release_date,
+            wm.rating, wm.watched_at
+       FROM watched_movies wm
+       JOIN movies m ON wm.movies_id = m.id
+      WHERE wm.user_id = ?
+   ORDER BY wm.watched_at DESC, m.release_date DESC"
+);
+if ($watchedStmt) {
+    $watchedStmt->bind_param("i", $userId);
+    $watchedStmt->execute();
+    $watchedRes = $watchedStmt->get_result();
+    while ($row = $watchedRes->fetch_assoc()) {
+        $watchedMovies[] = $row;
+    }
+    $watchedStmt->close();
+}
+
 // Parse preferred genres
 $preferredGenresList = [];
 if (!empty($preferredGenresRaw)) {
@@ -401,6 +422,83 @@ if (!empty($preferredGenresRaw)) {
             line-height: 1.4;
         }
 
+        /* ---- Watched films panel ---- */
+        .dash-panel-full {
+            grid-column: 1 / -1;
+        }
+
+        .watched-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(146px, 1fr));
+            gap: 16px;
+        }
+
+        .watched-card {
+            background-color: #131924;
+            border: 1px solid #242e40;
+            border-radius: 7px;
+            padding: 9px;
+            text-decoration: none;
+            display: block;
+            transition: transform 0.18s ease, border-color 0.18s ease;
+        }
+
+        .watched-card:hover {
+            transform: translateY(-3px);
+            border-color: #3b82f6;
+        }
+
+        .watched-card img {
+            width: 100%;
+            height: 196px;
+            object-fit: cover;
+            border-radius: 5px;
+            display: block;
+            background-color: #0f141c;
+        }
+
+        .watched-card-title {
+            color: #f1f5f9;
+            font-size: 12.5px;
+            font-weight: 600;
+            margin-top: 8px;
+            line-height: 1.3;
+        }
+
+        .watched-card-meta {
+            color: #64748b;
+            font-size: 11px;
+            margin-top: 3px;
+        }
+
+        .watched-stars {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #f59e0b;
+            letter-spacing: 1px;
+        }
+
+        .watched-unrated {
+            margin-top: 6px;
+            font-size: 10.5px;
+            color: #64748b;
+            font-style: italic;
+        }
+
+        .watched-empty {
+            text-align: center;
+            padding: 34px 20px;
+            color: #94a3b8;
+            font-size: 13.5px;
+            line-height: 1.6;
+        }
+        .watched-empty strong {
+            display: block;
+            color: #e2e8f0;
+            font-size: 15px;
+            margin-bottom: 6px;
+        }
+
         @media (max-width: 840px) {
             .dash-layout-grid {
                 grid-template-columns: 1fr;
@@ -444,8 +542,8 @@ if (!empty($preferredGenresRaw)) {
         </div>
 
         <div class="hero-actions">
-            <a href="watched.php" class="btn btn-secondary">Watched Movies</a>
-            <a href="index.php" class="btn btn-primary">Recommendations</a>
+            <a href="index.php" class="btn btn-secondary">Browse Movies</a>
+            <a href="watched.php" class="btn btn-primary">My Recommendations</a>
         </div>
     </div>
 
@@ -527,6 +625,57 @@ if (!empty($preferredGenresRaw)) {
                 </div>
             </div>
         </div>
+
+        <!-- Watched Films Panel (moved here from watched.php) -->
+        <div class="dash-panel dash-panel-full">
+            <div class="panel-header">
+                <h2 class="panel-title">Your Watched Films</h2>
+                <span class="panel-badge"><?php echo $totalWatched; ?> total</span>
+            </div>
+
+            <?php if (empty($watchedMovies)): ?>
+                <div class="watched-empty">
+                    <strong>You haven't marked any films as watched yet</strong>
+                    Browse the catalogue and mark films you've seen &mdash; each one feeds
+                    the recommendation engine, and rating them makes it sharper still.
+                    <div style="margin-top:16px;">
+                        <a href="index.php" class="btn btn-primary">Browse Movies</a>
+                    </div>
+                </div>
+            <?php else: ?>
+                <div class="watched-grid">
+                    <?php foreach ($watchedMovies as $movie): ?>
+                        <?php
+                            $poster = !empty($movie['poster_path'])
+                                ? $movie['poster_path']
+                                : 'default.jpg';
+                            $year   = !empty($movie['release_date'])
+                                ? substr($movie['release_date'], 0, 4)
+                                : '';
+                            $rating = (int) ($movie['rating'] ?? 0);
+                        ?>
+                        <a href="details.php?id=<?php echo (int) $movie['id']; ?>" class="watched-card">
+                            <img src="<?php echo htmlspecialchars($poster); ?>"
+                                 alt="<?php echo htmlspecialchars($movie['original_title']); ?>"
+                                 onerror="this.onerror=null;this.src='default.jpg';">
+                            <div class="watched-card-title">
+                                <?php echo htmlspecialchars($movie['original_title']); ?>
+                            </div>
+                            <?php if ($year !== ''): ?>
+                                <div class="watched-card-meta"><?php echo htmlspecialchars($year); ?></div>
+                            <?php endif; ?>
+                            <?php if ($rating > 0): ?>
+                                <div class="watched-stars" title="You rated this <?php echo $rating; ?> out of 5">
+                                    <?php echo str_repeat('&#9733;', $rating) . str_repeat('&#9734;', 5 - $rating); ?>
+                                </div>
+                            <?php else: ?>
+                                <div class="watched-unrated">Not rated yet</div>
+                            <?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
     </div>
 </div>
 
@@ -534,4 +683,3 @@ if (!empty($preferredGenresRaw)) {
 
 </body>
 </html>
-

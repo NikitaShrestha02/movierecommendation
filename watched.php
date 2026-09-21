@@ -1,4 +1,15 @@
 <?php
+/**
+ * watched.php  --  "For You" recommendations page
+ * ---------------------------------------------------------------
+ * This page used to list the user's watched films. That list now
+ * lives on the dashboard (userdash.php), and this page is the
+ * dedicated home for KNN recommendations.
+ *
+ * The filename is unchanged so existing links and bookmarks keep
+ * working.
+ * ---------------------------------------------------------------
+ */
 session_start();
 
 if (!isset($_SESSION['uemail'])) {
@@ -6,52 +17,43 @@ if (!isset($_SESSION['uemail'])) {
     exit;
 }
 
-$host = 'localhost';
-$db = 'movie_db';
-$user = 'root';
-$pass = '';
+$host    = 'localhost';
+$db      = 'movie_db';
+$user    = 'root';
+$pass    = '';
 $charset = 'utf8mb4';
 
 $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
 $options = [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ];
 
 try {
     $pdo = new PDO($dsn, $user, $pass, $options);
 
-    // Schema guard: Ensure 'rating' column exists in watched_movies table
-    try {
-        $colCheck = $pdo->query("SHOW COLUMNS FROM watched_movies LIKE 'rating'");
-        if ($colCheck->rowCount() === 0) {
-            $pdo->exec("ALTER TABLE watched_movies ADD COLUMN rating INT NULL DEFAULT NULL");
-        }
-    } catch (Exception $e) {
-        // Table or column already ready
-    }
-
-    // Get user ID
-    $stmt = $pdo->prepare("SELECT id FROM user WHERE email = ?");
+    $stmt = $pdo->prepare("SELECT id, name, preferred_genres FROM user WHERE email = ?");
     $stmt->execute([$_SESSION['uemail']]);
-    $user = $stmt->fetch();
+    $userRow = $stmt->fetch();
 
-    if (!$user) {
+    if (!$userRow) {
         throw new Exception("User not found.");
     }
 
-    $userId = $user['id'];
+    $userId     = (int) $userRow['id'];
+    $userName   = $userRow['name'];
+    $prefGenres = trim((string) $userRow['preferred_genres']);
 
-    // Get watched movies along with user ratings
-    $stmt = $pdo->prepare("
-        SELECT m.*, wm.rating AS user_rating
-        FROM watched_movies wm
-        JOIN movies m ON wm.movies_id = m.id
-        WHERE wm.user_id = ?
-        ORDER BY m.release_date DESC
-    ");
+    // Just enough context to explain where the recommendations come from
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) AS watched, COUNT(rating) AS rated
+           FROM watched_movies WHERE user_id = ?"
+    );
     $stmt->execute([$userId]);
-    $watchedMovies = $stmt->fetchAll();
+    $counts = $stmt->fetch();
+
+    $watchedCount = (int) $counts['watched'];
+    $ratedCount   = (int) $counts['rated'];
 
 } catch (Exception $e) {
     echo "<p>Error: " . htmlspecialchars($e->getMessage()) . "</p>";
@@ -63,11 +65,10 @@ try {
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Watched Movies</title>
+    <title>Recommended For You</title>
     <style>
-        * {
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
+
         body {
             margin: 0;
             padding: 0;
@@ -78,161 +79,149 @@ try {
         }
 
         .page-container {
-            max-width: 1200px;
-            margin: 32px auto;
-            padding: 0 16px;
+            max-width: 1100px;
+            width: 100%;
+            margin: 36px auto;
+            padding: 0 20px;
         }
 
-        .section-card {
-            background: #181f2c;
+        /* ---- Page header ---- */
+        .rec-hero {
+            background-color: #181f2c;
             border: 1px solid #242e40;
             border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-            padding: 28px 24px;
-            margin-bottom: 32px;
-        }
-
-        .section-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            padding: 26px 28px;
             margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 18px;
         }
 
-        .section-title {
-            font-size: 22px;
-            font-weight: 700;
+        .rec-hero h1 {
             color: #f8fafc;
-            margin: 0;
+            font-size: 23px;
+            font-weight: 700;
+            margin: 0 0 6px 0;
             letter-spacing: -0.01em;
         }
 
-        .back-link {
-            display: inline-block;
-            padding: 6px 14px;
-            background-color: #1e2637;
-            color: #cbd5e1;
-            font-size: 13px;
-            font-weight: 500;
-            border-radius: 5px;
-            border: 1px solid #2d384c;
-            text-decoration: none;
-            transition: background-color 0.2s ease, color 0.2s ease;
+        .rec-hero p {
+            margin: 0;
+            font-size: 13.5px;
+            color: #94a3b8;
+            line-height: 1.5;
         }
-        .back-link:hover {
-            background-color: #283449;
-            color: #ffffff;
+
+        .rec-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        .btn {
+            display: inline-block;
+            padding: 9px 18px;
+            border-radius: 5px;
+            font-size: 13.5px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+            font-family: inherit;
+        }
+        .btn-primary   { background-color: #2563eb; color: #fff; border-color: #2563eb; }
+        .btn-primary:hover { background-color: #1d4ed8; border-color: #1d4ed8; }
+        .btn-secondary { background-color: #1e2637; color: #cbd5e1; border-color: #2d384c; }
+        .btn-secondary:hover { background-color: #283449; color: #fff; }
+
+        /* ---- Sections ---- */
+        .rec-section-heading {
+            font-size: 16px;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin: 28px 0 14px;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .rec-section-heading:first-child { margin-top: 0; }
+
+        .rec-section-note {
+            font-size: 11.5px;
+            font-weight: 400;
+            color: #64748b;
+            letter-spacing: 0.02em;
         }
 
         .movie-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 20px;
-            justify-items: center;
+            grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+            gap: 18px;
         }
 
         .movie-card {
-            background: #131924;
-            border: 1px solid #263245;
+            background-color: #181f2c;
+            border: 1px solid #242e40;
             border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-            width: 100%;
-            max-width: 185px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
             padding: 10px;
             text-decoration: none;
+            display: block;
+            transition: transform 0.18s ease, border-color 0.18s ease;
         }
-        .movie-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.45);
-            border-color: #3b82f6;
-        }
+        .movie-card:hover { transform: translateY(-4px); border-color: #3b82f6; }
 
         .movie-card img {
             width: 100%;
-            height: 235px;
-            border-radius: 5px;
+            height: 232px;
             object-fit: cover;
+            border-radius: 6px;
             display: block;
+            background-color: #131924;
         }
 
         .movie-card-title {
-            margin-top: 10px;
-            font-weight: 600;
-            font-size: 13.5px;
             color: #f1f5f9;
-            min-height: 36px;
+            font-size: 13.5px;
+            font-weight: 600;
+            margin-top: 9px;
             line-height: 1.3;
-            text-align: center;
         }
 
-        /* User rating badge */
-        .user-stars-badge {
-            margin-top: 8px;
-            padding: 5px 8px;
-            background: #1a2230;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            border: 1px solid #283448;
-            width: 100%;
-        }
-        .user-stars {
-            color: #f59e0b;
-            font-size: 13px;
-            letter-spacing: 1px;
-            line-height: 1;
-        }
-        .user-rating-val {
-            font-size: 12px;
-            font-weight: 600;
-            color: #cbd5e1;
-        }
-        .unrated-tag {
-            color: #64748b;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        /* Predicted badge in KNN recommendations */
-        .predicted-badge {
-            margin-top: 8px;
-            padding: 5px 8px;
-            background: #1a2230;
-            border: 1px solid #283448;
-            border-radius: 4px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 5px;
-            font-size: 12.5px;
-            font-weight: 600;
-            color: #f59e0b;
-            width: 100%;
-        }
-        .predicted-badge .badge-label {
+        .match-badge {
             font-size: 11px;
-            color: #94a3b8;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
+            color: #f59e0b;
+            font-weight: 600;
+            background-color: #1a2230;
+            border: 1px solid #283448;
+            padding: 3px 7px;
+            border-radius: 4px;
+            margin-top: 7px;
+            display: inline-block;
         }
 
-        .no-data-msg {
+        .rec-reason {
+            font-size: 11.5px;
+            color: #94a3b8;
+            margin-top: 6px;
+            line-height: 1.35;
+        }
+
+        /* ---- Empty / loading states ---- */
+        .rec-state {
+            background-color: #181f2c;
+            border: 1px solid #242e40;
+            border-radius: 8px;
+            padding: 40px 28px;
             text-align: center;
             color: #94a3b8;
-            font-size: 15px;
-            padding: 32px 0;
-            margin: 0;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .rec-state strong { color: #e2e8f0; display: block; margin-bottom: 8px; font-size: 15.5px; }
+        .rec-state .btn { margin-top: 16px; }
+
+        @media (max-width: 600px) {
+            .movie-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+            .movie-card img { height: 186px; }
         }
     </style>
 </head>
@@ -241,88 +230,106 @@ try {
 <?php include("navigation.php"); ?>
 
 <div class="page-container">
-    <!-- Watched Movies Section -->
-    <div class="section-card">
-        <div class="section-header">
-            <h2 class="section-title">Watched Movies</h2>
-            <a href="index.php" class="back-link">← Back to Home</a>
-        </div>
 
-        <?php if (count($watchedMovies) === 0): ?>
-            <p class="no-data-msg">You haven't marked any movies as watched yet. Browse movies and add your ratings!</p>
-        <?php else: ?>
-            <div class="movie-grid">
-                <?php foreach ($watchedMovies as $movie): ?>
-                    <a href="details.php?id=<?php echo $movie['id']; ?>" class="movie-card">
-                        <img src="<?php echo htmlspecialchars($movie['poster_path'] ?: 'default.jpg'); ?>" alt="Poster of <?php echo htmlspecialchars($movie['original_title']); ?>" onerror="this.onerror=null;this.src='default.jpg';">
-                        <div class="movie-card-title"><?php echo htmlspecialchars($movie['original_title']); ?></div>
-                        <div class="user-stars-badge">
-                            <?php if (!empty($movie['user_rating'])): ?>
-                                <?php $r = (int)$movie['user_rating']; ?>
-                                <span class="user-stars"><?php echo str_repeat('★', $r) . str_repeat('☆', 5 - $r); ?></span>
-                                <span class="user-rating-val"><?php echo $r; ?>/5</span>
-                            <?php else: ?>
-                                <span class="unrated-tag">☆ Tap to Rate</span>
-                            <?php endif; ?>
-                        </div>
-                    </a>
-                <?php endforeach; ?>
-            </div>
-        <?php endif; ?>
+    <div class="rec-hero">
+        <div>
+            <h1>Recommended for you, <?php echo htmlspecialchars($userName); ?></h1>
+            <p>
+                <?php if ($watchedCount > 0): ?>
+                    Based on <strong><?php echo $watchedCount; ?></strong>
+                    film<?php echo $watchedCount === 1 ? '' : 's'; ?> you've watched<?php
+                        echo $ratedCount > 0 ? " ({$ratedCount} rated)" : '';
+                    ?><?php echo $prefGenres !== '' ? ' and your preferred genres' : ''; ?>.
+                <?php else: ?>
+                    You haven't marked any films as watched yet &mdash; these are based on your
+                    preferred genres for now.
+                <?php endif; ?>
+            </p>
+        </div>
+        <div class="rec-hero-actions">
+            <a href="userdash.php" class="btn btn-secondary">My watched films</a>
+            <a href="index.php" class="btn btn-primary">Browse movies</a>
+        </div>
     </div>
 
-    <!-- KNN Recommendations Section -->
-    <div class="section-card">
-        <div class="section-header">
-            <h2 class="section-title">Recommended Based on Your Taste</h2>
-        </div>
-        <div id="knn-recommendations-container">
-            <p class="no-data-msg">Calculating recommendations...</p>
-        </div>
+    <div id="knn-recommendations-container">
+        <div class="rec-state">Finding films for you&hellip;</div>
     </div>
+
 </div>
 
 <?php include("footer.php"); ?>
 
 <script>
-    document.addEventListener("DOMContentLoaded", function() {
-        const container = document.getElementById("knn-recommendations-container");
-        
-        fetch("knn_recommendations.php")
-            .then(response => response.json())
-            .then(data => {
-                if (!data || data.length === 0 || data.error) {
-                    container.innerHTML = "<p class='no-data-msg'>No recommendations available yet. Watch and rate some movies first!</p>";
-                    return;
-                }
-                
-                let html = '<div class="movie-grid">';
-                data.forEach(movie => {
-                    let predictedBadge = "";
-                    if (movie.predicted_rating) {
-                        predictedBadge = `
-                            <div class="predicted-badge" title="Predicted match score based on your rating profile">
-                                <span>★</span> ${movie.predicted_rating} <span class="badge-label">Match</span>
-                            </div>
-                        `;
-                    }
+document.addEventListener("DOMContentLoaded", function () {
+    const container = document.getElementById("knn-recommendations-container");
+    const watchedCount = <?php echo (int) $watchedCount; ?>;
 
-                    html += `
-                        <a href="details.php?id=${encodeURIComponent(movie.movie_id)}" class="movie-card">
-                            <img src="${movie.poster}" alt="${movie.title}" onerror="this.onerror=null;this.src='default.jpg';">
-                            <div class="movie-card-title">${movie.title}</div>
-                            ${predictedBadge}
-                        </a>
-                    `;
-                });
-                html += '</div>';
-                container.innerHTML = html;
-            })
-            .catch(error => {
-                console.error("Error fetching recommendations:", error);
-                container.innerHTML = "<p class='no-data-msg' style='color: #f87171;'>Failed to load recommendations.</p>";
-            });
-    });
+    const esc = str => String(str == null ? "" : str).replace(
+        /[&<>"']/g,
+        c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+    );
+
+    const card = movie => `
+        <a href="details.php?id=${encodeURIComponent(movie.movie_id)}" class="movie-card">
+            <img src="${esc(movie.poster)}" alt="${esc(movie.title)}"
+                 onerror="this.onerror=null;this.src='default.jpg';">
+            <div class="movie-card-title">${esc(movie.title)}</div>
+            ${movie.match_percent != null
+                ? `<div class="match-badge">★ ${movie.match_percent}% Match</div>` : ''}
+            ${movie.explanation
+                ? `<div class="rec-reason">${esc(movie.explanation)}</div>` : ''}
+        </a>`;
+
+    fetch("knn_recommendations.php")
+        .then(response => response.json())
+        .then(data => {
+            if (!data || data.length === 0 || data.error) {
+                container.innerHTML = watchedCount === 0
+                    ? `<div class="rec-state">
+                         <strong>Nothing to recommend yet</strong>
+                         Mark a few films as watched and rate them &mdash; the more you rate,
+                         the sharper these get.
+                         <div><a href="index.php" class="btn btn-primary">Browse movies</a></div>
+                       </div>`
+                    : `<div class="rec-state">
+                         <strong>No recommendations right now</strong>
+                         Try watching a few more films, or adjust your preferred genres.
+                         <div><a href="userdash.php" class="btn btn-secondary">Go to dashboard</a></div>
+                       </div>`;
+                return;
+            }
+
+            const top  = data.filter(m => m.section === "top");
+            const more = data.filter(m => m.section === "more");
+
+            let html = "";
+
+            if (top.length) {
+                html += `<h2 class="rec-section-heading">Top picks for you
+                           <span class="rec-section-note">ranked by your viewing history</span>
+                         </h2>
+                         <div class="movie-grid">${top.map(card).join("")}</div>`;
+            }
+            if (more.length) {
+                html += `<h2 class="rec-section-heading">Also for you
+                           <span class="rec-section-note">refreshes daily</span>
+                         </h2>
+                         <div class="movie-grid">${more.map(card).join("")}</div>`;
+            }
+            if (!html) {
+                html = `<div class="movie-grid">${data.map(card).join("")}</div>`;
+            }
+
+            container.innerHTML = html;
+        })
+        .catch(error => {
+            console.error("Error fetching recommendations:", error);
+            container.innerHTML = `<div class="rec-state" style="color:#f87171;">
+                Failed to load recommendations. Please refresh the page.
+            </div>`;
+        });
+});
 </script>
 
 </body>

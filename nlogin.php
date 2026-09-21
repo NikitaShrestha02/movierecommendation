@@ -17,6 +17,7 @@
             if (mysqli_num_rows($result) > 0) {
                 $row = mysqli_fetch_assoc($result);
                 $_SESSION["uemail"] = $row['email'];
+                $_SESSION["show_mood_modal"] = true;
                 setcookie('uemail', $row['email'], time() + 60*60*24*30);
                 header('Location: index.php');
                 exit();
