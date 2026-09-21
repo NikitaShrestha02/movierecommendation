@@ -124,9 +124,8 @@ header.admin-header {
             <li><a href="nowshowingform.php">Add Movie</a></li>
             <li><a href="shownow.php">Manage Movies</a></li>
             <li><a href="shu.php">Manage Users</a></li>
-            <li><a href="show.php">Bookings</a></li>
             <li><a href="index.php" target="_blank" class="btn-viewsite">View Site &rarr;</a></li>
             <li><a href="logout.php" class="btn-logout">Logout</a></li>
         </ul>
     </div>
-</header>
+</header>
