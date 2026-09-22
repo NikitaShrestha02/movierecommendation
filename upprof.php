@@ -33,7 +33,12 @@ if (isset($_SESSION['uemail'])) {
                     $upd_email_stmt->bind_param("ss", $new_email, $email);
                     $upd_email_stmt->execute();
                     $_SESSION['uemail'] = $new_email;
-                    setcookie('uemail', $new_email, time() + (86400 * 30), "/");
+                    setcookie('uemail', $new_email, [
+                        'expires'  => 0,
+                        'path'     => '/',
+                        'httponly' => true,
+                        'samesite' => 'Lax',
+                    ]);
                     $email = $new_email;
                 }
             }
@@ -110,4 +115,3 @@ if (isset($_SESSION['uemail'])) {
         </div>
     </form>
 </div>
-

@@ -58,13 +58,6 @@ $conn->set_charset('utf8mb4');
 const SIMILAR_COUNT   = 4;
 const DIFFERENT_COUNT = 3;
 
-/**
- * A candidate counts as "different" when its cosine to the seed is
- * below this. Tuned against the TMDB data: above roughly 0.15 films
- * start sharing a genre cluster with the seed.
- */
-const DIFFERENT_MAX_SIM = 0.12;
-
 // ---------------------------------------------------------------
 // User + watched list
 // ---------------------------------------------------------------
@@ -139,28 +132,56 @@ arsort($sims);
 $similarIds = array_slice($sims, 0, SIMILAR_COUNT, true);
 
 // ---------------------------------------------------------------
-// 2. DIFFERENT -- personalised, but unlike the seed
+// 2. DIFFERENT -- personalised, but a change of pace from the seed.
+//
+// The previous version filtered knn_recommend()'s candidate pool. That
+// pool is generated only from films sharing tokens with what the user
+// has already watched, so by construction it is full of films *like*
+// the seed and almost never held anything unlike it -- the "Fancy
+// something different" section therefore came back empty. (That is the
+// bug being fixed.)
+//
+// Instead we score the whole catalogue for "different-ness": a film
+// qualifies when it shares NO genre with the seed, and is then ranked
+// by how well it still fits the rest of the user's taste (their other
+// watched films and preferred genres), lightly penalising any residual
+// resemblance to the seed. This keeps the suggestions personal while
+// guaranteeing the section fills whenever off-genre films exist.
 // ---------------------------------------------------------------
-$pool = knn_recommend($model, $watched, [
-    'preferredGenres' => $prefGenres,
-    'limit'           => 120,
-]);
-
 $seedGenreSet = array_flip($seedGenres);
-$different    = [];
 
-foreach ($pool as $rec) {
-    $cid = $rec['id'];
-    if (isset($watchedSet[$cid]) || isset($similarIds[$cid])) {
+// Taste profile = the user's positively-weighted watched films OTHER
+// than the seed, plus a vector built from their preferred genres.
+$tasteWatched = [];                       // [watched_id => rating weight]
+foreach ($watched as $w) {
+    $wid = (int) $w['id'];
+    if ($wid === $movieId || !isset($vectors[$wid])) {
+        continue;
+    }
+    $wt = knn_rating_weight($w['rating'] ?? null);
+    if ($wt > 0) {
+        $tasteWatched[$wid] = $wt;
+    }
+}
+
+$profileVec = [];
+if ($prefGenres) {
+    $ptokens = [];
+    foreach ($prefGenres as $n) {
+        foreach (knn_tokens_from_name(knn_normalise($n)) as $t) {
+            $ptokens[] = $t;
+        }
+    }
+    $profileVec = knn_vector($ptokens, $model['idf']);
+}
+
+$diffScores = [];
+foreach ($vectors as $cid => $vec) {
+    if ($cid === $movieId || isset($watchedSet[$cid]) || isset($similarIds[$cid])) {
         continue;
     }
 
-    // Must not be close to the seed in feature space
-    if (knn_cosine($seedVec, $vectors[$cid]) >= DIFFERENT_MAX_SIM) {
-        continue;
-    }
-
-    // ...and must not share a genre with it
+    // A change of pace means sharing no genre with the seed.
     $overlap = false;
     foreach (($genres[$cid] ?? []) as $g) {
         if (isset($seedGenreSet[$g])) {
@@ -172,11 +193,28 @@ foreach ($pool as $rec) {
         continue;
     }
 
-    $different[$cid] = $rec['score'];
-    if (count($different) >= DIFFERENT_COUNT) {
-        break;
+    $seedAff = knn_cosine($seedVec, $vec);   // residual resemblance to the seed
+
+    // How well the film still fits the rest of the user's taste.
+    $taste = 0.0;
+    foreach ($tasteWatched as $wid => $wt) {
+        $s = knn_cosine($vectors[$wid], $vec);
+        if ($s > $taste) {
+            $taste = $s;                     // nearest non-seed watched film
+        }
     }
+    if ($profileVec) {
+        $taste += 0.5 * knn_cosine($profileVec, $vec);
+    }
+
+    $confidence = knn_confidence($model['nnz'][$cid] ?? count($vec));
+
+    // Reward taste fit; gently push down anything still seed-like.
+    $diffScores[$cid] = ($taste - 0.25 * $seedAff) * $confidence;
 }
+
+arsort($diffScores);
+$different = array_slice($diffScores, 0, DIFFERENT_COUNT, true);
 
 // ---------------------------------------------------------------
 // Hydrate
@@ -185,7 +223,7 @@ $allIds = array_merge([$movieId], array_keys($similarIds), array_keys($different
 $place  = implode(',', array_fill(0, count($allIds), '?'));
 
 $stmt = $conn->prepare(
-    "SELECT id, original_title, poster_path, genres, release_date FROM movies WHERE id IN ($place)"
+    "SELECT id, original_title, poster_path, genres, keywords, overview, release_date FROM movies WHERE id IN ($place)"
 );
 $stmt->bind_param(str_repeat('i', count($allIds)), ...$allIds);
 $stmt->execute();
@@ -197,20 +235,44 @@ while ($r = $res->fetch_assoc()) {
 }
 $stmt->close();
 
+// The seed's own keywords -- used to name the plot themes a "similar" pick
+// actually shares with it.
+$seedKeywords = knn_split_names($rows[$movieId]['keywords'] ?? '');
+
+/** Trim an overview to a short snippet ending on a word boundary. */
+function sim_snippet(?string $text, int $limit = 150): string
+{
+    $text = trim(preg_replace('/\s+/', ' ', (string) $text));
+    if ($text === '' || strlen($text) <= $limit) {
+        return $text;
+    }
+    $cut = substr($text, 0, $limit);
+    $sp  = strrpos($cut, ' ');
+    if ($sp !== false && $sp > 40) {
+        $cut = substr($cut, 0, $sp);
+    }
+    return rtrim($cut, " .,;:") . '…';
+}
+
 /** Build one card, explaining the shared ground with the seed. */
-function sim_card(array $rows, array $genres, int $id, float $score, array $seedGenres, string $kind): ?array
+function sim_card(array $rows, array $genres, int $id, float $score, array $seedGenres, array $seedKeywords, string $kind): ?array
 {
     if (!isset($rows[$id])) {
         return null;
     }
     $r  = $rows[$id];
     $g  = $genres[$id] ?? [];
+    $kw = knn_split_names($r['keywords'] ?? '');
+
+    $themes = [];
 
     if ($kind === 'similar') {
         $shared = array_values(array_intersect($g, $seedGenres));
+        // Plot themes (keywords) this film shares with the seed.
+        $themes = array_map('ucwords', array_slice(array_values(array_intersect($kw, $seedKeywords)), 0, 3));
         $reason = $shared
             ? 'Also ' . implode(' & ', array_map('ucwords', array_slice($shared, 0, 2)))
-            : 'Similar themes and keywords';
+            : ($themes ? 'Shares plot themes with it' : 'Similar themes and keywords');
     } else {
         $reason = $g
             ? 'A change of pace: ' . ucwords($g[0])
@@ -223,14 +285,16 @@ function sim_card(array $rows, array $genres, int $id, float $score, array $seed
         'poster'   => !empty($r['poster_path']) ? $r['poster_path'] : 'default.jpg',
         'year'     => !empty($r['release_date']) ? substr($r['release_date'], 0, 4) : '',
         'genres'   => implode(', ', array_map('ucwords', $g)),
-        'match'    => (int) round(100 * min(1.0, $score)),
+        'match'    => max(0, min(100, (int) round(100 * min(1.0, $score)))),
         'reason'   => $reason,
+        'themes'   => $themes,
+        'overview' => sim_snippet($r['overview'] ?? '', 150),
     ];
 }
 
 $similarOut = [];
 foreach ($similarIds as $id => $score) {
-    if ($card = sim_card($rows, $genres, $id, $score, $seedGenres, 'similar')) {
+    if ($card = sim_card($rows, $genres, $id, $score, $seedGenres, $seedKeywords, 'similar')) {
         $similarOut[] = $card;
     }
 }
@@ -238,7 +302,7 @@ foreach ($similarIds as $id => $score) {
 $differentOut = [];
 $maxDiff = $different ? max($different) : 1.0;
 foreach ($different as $id => $score) {
-    if ($card = sim_card($rows, $genres, $id, $score / ($maxDiff ?: 1), $seedGenres, 'different')) {
+    if ($card = sim_card($rows, $genres, $id, $score / ($maxDiff ?: 1), $seedGenres, $seedKeywords, 'different')) {
         $differentOut[] = $card;
     }
 }

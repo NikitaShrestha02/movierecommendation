@@ -14,7 +14,6 @@ include('connection.php');
 $totalMovies = 0;
 $totalUsers = 0;
 $totalRatings = 0;
-$totalBookings = 0;
 
 $mRes = mysqli_query($conn, "SELECT COUNT(*) AS cnt FROM movies");
 if ($mRes) $totalMovies = (int)mysqli_fetch_assoc($mRes)['cnt'];
@@ -24,13 +23,6 @@ if ($uRes) $totalUsers = (int)mysqli_fetch_assoc($uRes)['cnt'];
 
 $rRes = mysqli_query($conn, "SELECT COUNT(*) AS cnt FROM watched_movies WHERE rating IS NOT NULL");
 if ($rRes) $totalRatings = (int)mysqli_fetch_assoc($rRes)['cnt'];
-
-$tableCheck = mysqli_query($conn, "SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings'");
-$bookingsTableExists = ($tableCheck && (int)mysqli_fetch_assoc($tableCheck)['cnt'] > 0);
-if ($bookingsTableExists) {
-    $bRes = mysqli_query($conn, "SELECT COUNT(*) AS cnt FROM bookings");
-    if ($bRes) $totalBookings = (int)mysqli_fetch_assoc($bRes)['cnt'];
-}
 
 // Fetch 5 latest movies
 $latestMovies = mysqli_query($conn, "SELECT id, original_title, release_date, poster_path FROM movies ORDER BY release_date DESC LIMIT 5");
@@ -362,13 +354,6 @@ $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user OR
             </div>
         </div>
 
-        <div class="stat-card">
-            <div class="stat-icon">🎟️</div>
-            <div>
-                <div class="stat-value"><?php echo $totalBookings; ?></div>
-                <div class="stat-label">Total Bookings</div>
-            </div>
-        </div>
     </div>
 
     <!-- Action Shortcuts -->
@@ -397,13 +382,6 @@ $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user OR
             <a href="shu.php" class="action-link">Manage User Accounts &rarr;</a>
         </div>
 
-        <div class="action-card">
-            <div>
-                <h3>Manage Bookings</h3>
-                <p>Inspect ticket reservations, seat allocations, and order totals.</p>
-            </div>
-            <a href="show.php" class="action-link">Inspect Bookings &rarr;</a>
-        </div>
     </div>
 
     <!-- Previews Grid -->
@@ -481,4 +459,4 @@ $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user OR
 </footer>
 
 </body>
-</html>
+</html>

@@ -139,6 +139,9 @@ if ($justWatchedId <= 0) {
   margin-top: 7px; line-height: 1.25;
 }
 .jw-movie-reason { color: #94a3b8; font-size: 0.68rem; margin-top: 3px; line-height: 1.25; }
+.jw-themes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.jw-theme-chip { font-size: 0.6rem; color: #93c5fd; background: #12203a; border: 1px solid #24344f; padding: 1px 6px; border-radius: 999px; line-height: 1.35; }
+.jw-movie-plot { color: #64748b; font-size: 0.62rem; margin-top: 5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
 .jw-loading, .jw-empty {
   color: #94a3b8; font-size: 0.86rem; text-align: center; padding: 22px 0;
@@ -196,12 +199,22 @@ if ($justWatchedId <= 0) {
   overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
   document.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
 
+  var chips = function (arr) {
+    return (Array.isArray(arr) && arr.length)
+      ? '<div class="jw-themes">' + arr.map(function (t) {
+          return '<span class="jw-theme-chip">' + esc(t) + '</span>';
+        }).join("") + '</div>'
+      : '';
+  };
+
   const card = m => `
     <a class="jw-movie" href="details.php?id=${encodeURIComponent(m.movie_id)}">
       <img src="${esc(m.poster)}" alt="${esc(m.title)}"
            onerror="this.onerror=null;this.src='default.jpg';">
       <div class="jw-movie-title">${esc(m.title)}${m.year ? " (" + esc(m.year) + ")" : ""}</div>
       <div class="jw-movie-reason">${esc(m.reason)}</div>
+      ${chips(m.themes)}
+      ${m.overview ? `<div class="jw-movie-plot">${esc(m.overview)}</div>` : ''}
     </a>`;
 
   open();

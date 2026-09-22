@@ -73,7 +73,85 @@ if ($watchedStmt) {
 $preferredGenresList = [];
 if (!empty($preferredGenresRaw)) {
     $preferredGenresList = array_map('trim', explode(',', $preferredGenresRaw));
+    $preferredGenresList = array_values(array_filter($preferredGenresList, fn($g) => $g !== ''));
 }
+
+// ---------------------------------------------------------------
+// Derived analytics -- computed from data already fetched above, so
+// no extra queries. These power the "taste profile" panel.
+// ---------------------------------------------------------------
+
+/** Parse a movies.genres cell, which is either raw TMDB JSON or plain
+ *  comma text, into a list of display names. */
+function ud_parse_genres($raw): array {
+    $raw = trim((string)$raw);
+    if ($raw === '') return [];
+    $names = [];
+    if ($raw[0] === '[' || $raw[0] === '{') {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $item) {
+                if (is_array($item) && isset($item['name'])) $names[] = (string)$item['name'];
+                elseif (is_string($item)) $names[] = $item;
+            }
+        }
+    }
+    if (!$names) $names = preg_split('/\s*[,|;]\s*/', $raw) ?: [];
+    $out = [];
+    foreach ($names as $n) {
+        $n = trim($n);
+        if ($n !== '') $out[] = $n;
+    }
+    return $out;
+}
+
+// Genre frequency across watched films.
+$genreCounts = [];   // key => ['label' => Display, 'count' => n]
+foreach ($watchedMovies as $wm) {
+    foreach (ud_parse_genres($wm['genres'] ?? '') as $g) {
+        $key = strtolower($g);
+        if (!isset($genreCounts[$key])) {
+            $genreCounts[$key] = ['label' => ucwords($key), 'count' => 0];
+        }
+        $genreCounts[$key]['count']++;
+    }
+}
+uasort($genreCounts, fn($a, $b) => $b['count'] <=> $a['count']);
+$topGenres  = array_slice(array_values($genreCounts), 0, 6);
+$genreMax   = $topGenres ? max(array_column($topGenres, 'count')) : 0;
+$favGenre   = $topGenres[0]['label'] ?? null;
+
+// Rating distribution (1..5) across rated films.
+$ratingDist = [1 => 0, 2 => 0, 3 => 0, 4 => 0, 5 => 0];
+foreach ($watchedMovies as $wm) {
+    $r = (int)($wm['rating'] ?? 0);
+    if ($r >= 1 && $r <= 5) $ratingDist[$r]++;
+}
+$ratingMax = $ratingDist ? max($ratingDist) : 0;
+
+$ratedPct  = $totalWatched > 0 ? (int)round(($totalRated / $totalWatched) * 100) : 0;
+
+// Most recent activity date.
+$lastWatchedLabel = '';
+if (!empty($watchedMovies[0]['watched_at'])) {
+    $ts = strtotime($watchedMovies[0]['watched_at']);
+    if ($ts) $lastWatchedLabel = date('M j, Y', $ts);
+}
+
+// Current mood (set by the recommender / mood modal).
+$currentMood = isset($_SESSION['user_mood']) && $_SESSION['user_mood'] !== ''
+    ? ucfirst((string)$_SESSION['user_mood'])
+    : '';
+
+// Avatar initials from the user's name (falls back to email).
+$initials = '';
+foreach (array_slice(preg_split('/\s+/', trim((string)$userName)) ?: [], 0, 2) as $p) {
+    if ($p !== '') $initials .= strtoupper($p[0]);
+}
+if ($initials === '') $initials = strtoupper(substr($loggedInEmail, 0, 1));
+
+// Rounded average, for drawing a star row.
+$avgStars = (int)round($avgRating);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -81,605 +159,669 @@ if (!empty($preferredGenresRaw)) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        * {
-            box-sizing: border-box;
+        :root {
+            --bg: #0f141c;
+            --surface: #181f2c;
+            --surface-2: #131924;
+            --border: #242e40;
+            --border-2: #2d384c;
+            --text: #cbd5e1;
+            --text-dim: #94a3b8;
+            --text-mute: #64748b;
+            --heading: #f8fafc;
+            --accent: #3b82f6;
+            --accent-strong: #2563eb;
+            --amber: #f59e0b;
+            --green: #34d399;
+            --radius: 10px;
+            --radius-sm: 6px;
         }
+
+        * { box-sizing: border-box; }
 
         body {
             margin: 0;
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #0f141c;
-            color: #cbd5e1;
+            background-color: var(--bg);
+            color: var(--text);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
         }
 
         .page-container {
-            max-width: 1050px;
+            max-width: 1080px;
             width: 100%;
-            margin: 36px auto;
+            margin: 32px auto;
             padding: 0 20px;
             flex: 1;
         }
 
-        /* User Hero Card */
-        .user-hero-card {
-            background-color: #181f2c;
-            border: 1px solid #242e40;
-            border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-            padding: 28px;
-            margin-bottom: 24px;
+        /* ---- Hero ------------------------------------------------ */
+        .hero {
+            position: relative;
+            background:
+                radial-gradient(1200px 200px at 0% 0%, rgba(37, 99, 235, 0.16), transparent 60%),
+                var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 26px 28px;
+            margin-bottom: 22px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
-            gap: 20px;
+            gap: 22px;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-strong), #7c3aed 60%, transparent);
         }
 
-        .user-profile-info {
+        .hero-identity {
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 18px;
+            min-width: 0;
         }
 
-        .user-avatar-wrapper img {
-            width: 72px;
-            height: 72px;
+        .avatar {
+            width: 66px;
+            height: 66px;
             border-radius: 50%;
-            object-fit: cover;
-            border: 2px solid #334155;
-            display: block;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+            letter-spacing: 0.5px;
         }
 
-        .user-meta h1 {
-            color: #f8fafc;
-            font-size: 22px;
+        .hero-name {
+            color: var(--heading);
+            font-size: 23px;
             font-weight: 700;
-            margin: 0 0 6px 0;
+            margin: 0 0 3px 0;
             letter-spacing: -0.01em;
         }
-
-        .user-meta .user-email {
-            color: #94a3b8;
-            font-size: 14px;
+        .hero-email {
+            color: var(--text-dim);
+            font-size: 13.5px;
             margin: 0 0 10px 0;
+            word-break: break-all;
         }
 
-        .genre-tags {
+        .chip-row {
             display: flex;
             flex-wrap: wrap;
             gap: 6px;
+            align-items: center;
         }
-
-        .genre-tag {
-            background-color: #131924;
-            border: 1px solid #263347;
-            color: #94a3b8;
+        .chip {
+            background-color: var(--surface-2);
+            border: 1px solid var(--border);
+            color: var(--text-dim);
             font-size: 11.5px;
             font-weight: 500;
-            padding: 3px 9px;
-            border-radius: 4px;
+            padding: 3px 10px;
+            border-radius: 999px;
+        }
+        .chip-mood {
+            color: var(--amber);
+            border-color: rgba(245, 158, 11, 0.35);
+            background-color: rgba(245, 158, 11, 0.10);
+        }
+        .chip-label {
+            color: var(--text-mute);
+            font-size: 11px;
+            margin-right: 2px;
         }
 
         .hero-actions {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+            align-items: center;
         }
 
-        /* Dashboard Metrics Grid */
+        /* ---- Buttons (also used by included upprof.php) --------- */
+        .btn {
+            display: inline-block;
+            padding: 9px 18px;
+            border-radius: var(--radius-sm);
+            font-size: 13.5px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+            font-family: inherit;
+            text-align: center;
+        }
+        .btn-primary { background-color: var(--accent-strong); color: #fff; border-color: var(--accent-strong); }
+        .btn-primary:hover { background-color: #1d4ed8; border-color: #1d4ed8; }
+        .btn-secondary { background-color: #1e2637; color: var(--text); border-color: var(--border-2); }
+        .btn-secondary:hover { background-color: #283449; color: #fff; }
+        .btn-ghost { background: transparent; color: var(--text-dim); border-color: var(--border-2); }
+        .btn-ghost:hover { color: #fff; border-color: var(--accent); }
+        .btn-danger { background-color: rgba(239, 68, 68, 0.12); color: #f87171; border-color: rgba(239, 68, 68, 0.3); }
+        .btn-danger:hover { background-color: #dc2626; color: #fff; border-color: #dc2626; }
+        .btn-block { width: 100%; display: block; }
+
+        /* ---- Stats ---------------------------------------------- */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
+            gap: 14px;
+            margin-bottom: 22px;
         }
-
         .stat-card {
-            background-color: #181f2c;
-            border: 1px solid #242e40;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 18px 20px;
             display: flex;
             align-items: center;
-            gap: 16px;
-            transition: border-color 0.2s ease, transform 0.15s ease;
+            gap: 15px;
         }
-
-        .stat-card:hover {
-            border-color: #3b82f6;
-            transform: translateY(-2px);
-        }
-
         .stat-icon {
-            font-size: 24px;
+            font-size: 22px;
             width: 44px;
             height: 44px;
-            background-color: #131924;
-            border: 1px solid #242e40;
-            border-radius: 8px;
+            background-color: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
             display: flex;
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
         }
-
         .stat-value {
-            color: #f8fafc;
+            color: var(--heading);
             font-size: 20px;
             font-weight: 700;
             margin: 0 0 2px 0;
+            line-height: 1.1;
         }
+        .stat-value .stat-suffix { color: var(--text-mute); font-size: 13px; font-weight: 600; }
+        .stat-label { color: var(--text-dim); font-size: 12.5px; margin: 0; }
+        .stat-stars { color: var(--amber); font-size: 13px; letter-spacing: 1px; }
+        .stat-stars .off { color: #3a4counterfeit; }
 
-        .stat-label {
-            color: #94a3b8;
-            font-size: 12.5px;
-            margin: 0;
+        /* ---- Panels --------------------------------------------- */
+        .panel {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px 26px;
         }
-
-        /* Dashboard Main Grid (2-Columns) */
-        .dash-layout-grid {
-            display: grid;
-            grid-template-columns: 1.6fr 1fr;
-            gap: 24px;
-            align-items: start;
-        }
-
-        .dash-panel {
-            background-color: #181f2c;
-            border: 1px solid #242e40;
-            border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-            padding: 28px;
-            margin-bottom: 24px;
-        }
-
         .panel-header {
             display: flex;
-            align-items: center;
+            align-items: baseline;
             justify-content: space-between;
-            margin-bottom: 20px;
-            padding-bottom: 14px;
-            border-bottom: 1px solid #242e40;
+            gap: 12px;
+            margin-bottom: 18px;
+            padding-bottom: 13px;
+            border-bottom: 1px solid var(--border);
         }
-
-        .panel-title {
-            color: #f8fafc;
-            font-size: 17px;
-            font-weight: 700;
-            margin: 0;
-        }
-
+        .panel-title { color: var(--heading); font-size: 16.5px; font-weight: 700; margin: 0; }
         .panel-badge {
             font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
+            font-weight: 600;
             color: #60a5fa;
             background-color: rgba(37, 99, 235, 0.12);
             border: 1px solid rgba(96, 165, 250, 0.25);
-            padding: 3px 8px;
-            border-radius: 4px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            white-space: nowrap;
         }
+        .panel + .panel { margin-top: 20px; }
 
-        /* Form Styles */
-        .form-row {
+        /* ---- Taste profile (the feature) ------------------------ */
+        .taste-panel { margin-bottom: 22px; }
+        .taste-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 16px;
+            grid-template-columns: 1.4fr 1fr;
+            gap: 34px;
         }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            margin-bottom: 16px;
-        }
-
-        .form-row .form-group {
-            margin-bottom: 0;
-        }
-
-        .dash-label {
-            color: #cbd5e1;
-            font-size: 13px;
+        .taste-sub-title {
+            color: var(--text-dim);
+            font-size: 12.5px;
             font-weight: 600;
-            margin-bottom: 7px;
+            margin: 0 0 14px 0;
         }
 
+        /* Genre bars */
+        .genre-bar-row {
+            display: grid;
+            grid-template-columns: 108px 1fr 34px;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 11px;
+        }
+        .genre-bar-name {
+            color: var(--text);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .genre-bar-track {
+            background-color: var(--surface-2);
+            border-radius: 999px;
+            height: 10px;
+            overflow: hidden;
+        }
+        .genre-bar-fill {
+            height: 100%;
+            width: 0;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #2563eb, #60a5fa);
+            transition: width 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .genre-bar-count { color: var(--text-dim); font-size: 12px; text-align: left; }
+
+        /* Rating histogram */
+        .rating-hist {
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+            height: 128px;
+            padding-top: 6px;
+        }
+        .rating-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; justify-content: flex-end; }
+        .rating-col-track { width: 100%; display: flex; align-items: flex-end; justify-content: center; flex: 1; }
+        .rating-col-fill {
+            width: 70%;
+            max-width: 34px;
+            height: 0;
+            border-radius: 5px 5px 0 0;
+            background: linear-gradient(180deg, #fbbf24, #f59e0b);
+            transition: height 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+            min-height: 2px;
+        }
+        .rating-col-fill.empty { background: var(--surface-2); }
+        .rating-col-label { color: var(--amber); font-size: 12px; font-weight: 600; }
+        .rating-col-n { color: var(--text-mute); font-size: 11px; }
+
+        .taste-empty { color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+
+        /* ---- Main grid: profile + sidebar ----------------------- */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1.7fr 1fr;
+            gap: 22px;
+            align-items: start;
+            margin-bottom: 22px;
+        }
+        .side-column { display: flex; flex-direction: column; gap: 20px; }
+
+        .side-block { }
+        .side-block-title { color: var(--heading); font-size: 14px; font-weight: 600; margin: 0 0 5px 0; }
+        .side-block-desc { color: var(--text-dim); font-size: 12.5px; margin: 0 0 12px 0; line-height: 1.5; }
+
+        /* ---- Profile form (classes required by upprof.php) ------ */
+        .profile-form-wrapper {}
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .form-group { display: flex; flex-direction: column; margin-bottom: 16px; }
+        .form-row .form-group { margin-bottom: 0; }
+        .dash-label { color: var(--text); font-size: 13px; font-weight: 600; margin-bottom: 7px; }
         .dash-input {
             width: 100%;
-            background-color: #131924;
-            border: 1px solid #2d384c;
-            border-radius: 6px;
-            color: #f1f5f9;
+            background-color: var(--surface-2);
+            border: 1px solid var(--border-2);
+            border-radius: var(--radius-sm);
+            color: var(--heading);
             padding: 10px 14px;
             font-size: 14px;
             font-family: inherit;
             outline: none;
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
+        .dash-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+        .form-actions { margin-top: 20px; display: flex; justify-content: flex-end; }
 
-        .dash-input:focus {
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-        }
+        .dash-alert { padding: 12px 16px; border-radius: var(--radius-sm); font-size: 13.5px; margin-bottom: 20px; line-height: 1.5; }
+        .dash-alert-success { background-color: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); color: var(--green); }
+        .dash-alert-error { background-color: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; }
 
-        .form-actions {
-            margin-top: 20px;
-            display: flex;
-            justify-content: flex-end;
-        }
-
-        /* Alerts */
-        .dash-alert {
-            padding: 12px 16px;
-            border-radius: 6px;
-            font-size: 13.5px;
-            margin-bottom: 20px;
-            line-height: 1.5;
-        }
-
-        .dash-alert-success {
-            background-color: rgba(16, 185, 129, 0.12);
-            border: 1px solid rgba(16, 185, 129, 0.35);
-            color: #34d399;
-        }
-
-        .dash-alert-error {
-            background-color: rgba(239, 68, 68, 0.12);
-            border: 1px solid rgba(239, 68, 68, 0.35);
-            color: #f87171;
-        }
-
-        /* Buttons */
-        .btn {
-            display: inline-block;
-            padding: 9px 18px;
-            border-radius: 5px;
-            font-size: 13.5px;
-            font-weight: 600;
-            text-decoration: none;
-            cursor: pointer;
-            border: none;
-            transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-            font-family: inherit;
-            text-align: center;
-        }
-
-        .btn-primary {
-            background-color: #2563eb;
-            color: #ffffff;
-            border: 1px solid #2563eb;
-        }
-
-        .btn-primary:hover {
-            background-color: #1d4ed8;
-            border-color: #1d4ed8;
-            color: #ffffff;
-        }
-
-        .btn-secondary {
-            background-color: #1e2637;
-            color: #cbd5e1;
-            border: 1px solid #2d384c;
-        }
-
-        .btn-secondary:hover {
-            background-color: #283449;
-            color: #ffffff;
-        }
-
-        .btn-danger {
-            background-color: rgba(239, 68, 68, 0.12);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.3);
-        }
-
-        .btn-danger:hover {
-            background-color: #dc2626;
-            color: #ffffff;
-            border-color: #dc2626;
-        }
-
-        .btn-block {
-            width: 100%;
-            display: block;
-        }
-
-        /* Side Action List */
-        .action-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .action-card-item {
-            background-color: #131924;
-            border: 1px solid #242e40;
-            border-radius: 6px;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .action-item-title {
-            color: #f1f5f9;
-            font-size: 14px;
-            font-weight: 600;
-            margin: 0;
-        }
-
-        .action-item-desc {
-            color: #94a3b8;
-            font-size: 12.5px;
-            margin: 0 0 4px 0;
-            line-height: 1.4;
-        }
-
-        /* ---- Watched films panel ---- */
-        .dash-panel-full {
-            grid-column: 1 / -1;
-        }
-
+        /* ---- Watched films -------------------------------------- */
+        .watched-panel { margin-bottom: 8px; }
         .watched-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(146px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
             gap: 16px;
         }
-
         .watched-card {
-            background-color: #131924;
-            border: 1px solid #242e40;
-            border-radius: 7px;
-            padding: 9px;
+            background-color: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
             text-decoration: none;
             display: block;
             transition: transform 0.18s ease, border-color 0.18s ease;
         }
-
-        .watched-card:hover {
-            transform: translateY(-3px);
-            border-color: #3b82f6;
-        }
-
+        .watched-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+        .watched-poster { position: relative; }
         .watched-card img {
             width: 100%;
-            height: 196px;
+            height: 190px;
             object-fit: cover;
             border-radius: 5px;
             display: block;
-            background-color: #0f141c;
+            background-color: var(--bg);
         }
-
-        .watched-card-title {
-            color: #f1f5f9;
-            font-size: 12.5px;
-            font-weight: 600;
-            margin-top: 8px;
-            line-height: 1.3;
-        }
-
-        .watched-card-meta {
-            color: #64748b;
+        .poster-rating {
+            position: absolute;
+            top: 7px;
+            left: 7px;
+            background: rgba(9, 12, 20, 0.85);
+            color: var(--amber);
             font-size: 11px;
-            margin-top: 3px;
+            font-weight: 700;
+            padding: 3px 7px;
+            border-radius: 999px;
+            backdrop-filter: blur(2px);
+        }
+        .poster-rating.unrated { color: var(--text-mute); font-weight: 500; }
+        .watched-card-title { color: #f1f5f9; font-size: 12.5px; font-weight: 600; margin-top: 8px; line-height: 1.3; }
+        .watched-card-meta { color: var(--text-mute); font-size: 11px; margin-top: 3px; }
+
+        .watched-hidden { display: none; }
+        .watched-more-wrap { text-align: center; margin-top: 20px; }
+
+        .empty-state { text-align: center; padding: 34px 20px; color: var(--text-dim); font-size: 13.5px; line-height: 1.6; }
+        .empty-state strong { display: block; color: #e2e8f0; font-size: 15px; margin-bottom: 6px; }
+
+        @media (max-width: 880px) {
+            .main-grid { grid-template-columns: 1fr; }
+            .taste-grid { grid-template-columns: 1fr; gap: 26px; }
+            .hero { flex-direction: column; align-items: flex-start; }
+            .hero-actions { width: 100%; }
+            .form-row { grid-template-columns: 1fr; }
         }
 
-        .watched-stars {
-            margin-top: 6px;
-            font-size: 12px;
-            color: #f59e0b;
-            letter-spacing: 1px;
-        }
-
-        .watched-unrated {
-            margin-top: 6px;
-            font-size: 10.5px;
-            color: #64748b;
-            font-style: italic;
-        }
-
-        .watched-empty {
-            text-align: center;
-            padding: 34px 20px;
-            color: #94a3b8;
-            font-size: 13.5px;
-            line-height: 1.6;
-        }
-        .watched-empty strong {
-            display: block;
-            color: #e2e8f0;
-            font-size: 15px;
-            margin-bottom: 6px;
-        }
-
-        @media (max-width: 840px) {
-            .dash-layout-grid {
-                grid-template-columns: 1fr;
-            }
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-            .user-hero-card {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            .hero-actions {
-                width: 100%;
-            }
+        @media (prefers-reduced-motion: reduce) {
+            .genre-bar-fill, .rating-col-fill { transition: none; }
         }
     </style>
-    <title>User Dashboard - Movie Recommendation</title>
+    <title>Your Dashboard - Movie Recommendation</title>
 </head>
 <body>
 
 <?php include("navigation.php"); ?>
 
 <div class="page-container">
-    <!-- User Hero Card -->
-    <div class="user-hero-card">
-        <div class="user-profile-info">
-            <div class="user-avatar-wrapper">
-                <img src="userr.jpg" alt="<?php echo htmlspecialchars($userName); ?>">
-            </div>
-            <div class="user-meta">
-                <h1>Welcome back, <?php echo htmlspecialchars($userName); ?>!</h1>
-                <p class="user-email"><?php echo htmlspecialchars($loggedInEmail); ?></p>
-                <?php if (!empty($preferredGenresList)): ?>
-                    <div class="genre-tags">
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="hero-identity">
+            <div class="avatar" aria-hidden="true"><?php echo htmlspecialchars($initials); ?></div>
+            <div>
+                <h1 class="hero-name">Welcome back, <?php echo htmlspecialchars($userName); ?></h1>
+                <p class="hero-email"><?php echo htmlspecialchars($loggedInEmail); ?></p>
+                <div class="chip-row">
+                    <?php if ($currentMood !== ''): ?>
+                        <span class="chip chip-mood">Mood: <?php echo htmlspecialchars($currentMood); ?></span>
+                    <?php endif; ?>
+                    <?php if (!empty($preferredGenresList)): ?>
+                        <span class="chip-label">Likes</span>
                         <?php foreach ($preferredGenresList as $genre): ?>
-                            <span class="genre-tag"><?php echo htmlspecialchars($genre); ?></span>
+                            <span class="chip"><?php echo htmlspecialchars($genre); ?></span>
                         <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
+                    <?php else: ?>
+                        <span class="chip-label">No preferred genres set yet</span>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
 
         <div class="hero-actions">
-            <a href="index.php" class="btn btn-secondary">Browse Movies</a>
-            <a href="watched.php" class="btn btn-primary">My Recommendations</a>
+            <button type="button" id="openMoodModalBtn" class="btn btn-ghost">Update mood</button>
+            <a href="index.php" class="btn btn-secondary">Browse movies</a>
+            <a href="watched.php" class="btn btn-primary">My recommendations</a>
         </div>
-    </div>
+    </section>
 
-    <!-- Dashboard Metrics Grid -->
+    <!-- Stats -->
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-icon">🎬</div>
             <div>
                 <div class="stat-value"><?php echo $totalWatched; ?></div>
-                <div class="stat-label">Watched Movies</div>
+                <div class="stat-label">Films watched</div>
             </div>
         </div>
 
         <div class="stat-card">
             <div class="stat-icon">⭐</div>
             <div>
-                <div class="stat-value"><?php echo $totalRated; ?></div>
-                <div class="stat-label">Rated Movies</div>
+                <div class="stat-value"><?php echo $totalRated; ?> <span class="stat-suffix">of <?php echo $totalWatched; ?> rated</span></div>
+                <div class="stat-label"><?php echo $ratedPct; ?>% of your library</div>
             </div>
         </div>
 
         <div class="stat-card">
             <div class="stat-icon">📊</div>
             <div>
-                <div class="stat-value"><?php echo ($avgRating > 0) ? $avgRating . ' / 5' : 'None yet'; ?></div>
-                <div class="stat-label">Average Rating</div>
+                <?php if ($avgRating > 0): ?>
+                    <div class="stat-value"><?php echo $avgRating; ?><span class="stat-suffix"> / 5</span></div>
+                    <div class="stat-stars" aria-hidden="true"><?php
+                        echo str_repeat('&#9733;', $avgStars) . str_repeat('&#9734;', 5 - $avgStars);
+                    ?></div>
+                <?php else: ?>
+                    <div class="stat-value">—</div>
+                    <div class="stat-label">Rate a film to begin</div>
+                <?php endif; ?>
             </div>
         </div>
 
         <div class="stat-card">
-            <div class="stat-icon">⚡</div>
+            <div class="stat-icon">🎭</div>
             <div>
-                <div class="stat-value">KNN Engine</div>
-                <div class="stat-label">Active &amp; Calibrated</div>
+                <div class="stat-value" style="font-size:<?php echo $favGenre ? '17px' : '20px'; ?>;"><?php echo $favGenre ? htmlspecialchars($favGenre) : '—'; ?></div>
+                <div class="stat-label">Your top genre</div>
             </div>
         </div>
     </div>
 
-    <!-- Main Dashboard Grid -->
-    <div class="dash-layout-grid">
-        <!-- Profile Settings Panel -->
-        <div class="dash-panel">
-            <div class="panel-header">
-                <h2 class="panel-title">Profile Information</h2>
-                <span class="panel-badge">Account Details</span>
-            </div>
+    <!-- Taste profile: the feature panel -->
+    <section class="panel taste-panel">
+        <div class="panel-header">
+            <h2 class="panel-title">Your taste profile</h2>
+            <span class="panel-badge">Powers your KNN picks</span>
+        </div>
 
+        <?php if ($totalWatched === 0): ?>
+            <p class="taste-empty">
+                Once you mark a few films as watched, this is where you'll see the genres you
+                gravitate toward and how you tend to rate. That same profile is what the
+                recommender uses to find your next film.
+            </p>
+        <?php else: ?>
+            <div class="taste-grid">
+                <!-- Genre breakdown -->
+                <div>
+                    <p class="taste-sub-title">Most-watched genres</p>
+                    <?php if ($topGenres): ?>
+                        <?php foreach ($topGenres as $g): ?>
+                            <?php $pct = $genreMax > 0 ? ($g['count'] / $genreMax) * 100 : 0; ?>
+                            <div class="genre-bar-row">
+                                <span class="genre-bar-name" title="<?php echo htmlspecialchars($g['label']); ?>"><?php echo htmlspecialchars($g['label']); ?></span>
+                                <span class="genre-bar-track">
+                                    <span class="genre-bar-fill" data-width="<?php echo round($pct, 1); ?>"></span>
+                                </span>
+                                <span class="genre-bar-count"><?php echo (int)$g['count']; ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <p class="taste-empty">Your watched films don't have genre data yet.</p>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Rating distribution -->
+                <div>
+                    <p class="taste-sub-title">How you rate</p>
+                    <?php if ($totalRated > 0): ?>
+                        <div class="rating-hist">
+                            <?php for ($s = 1; $s <= 5; $s++): ?>
+                                <?php
+                                    $n = $ratingDist[$s];
+                                    $h = $ratingMax > 0 ? ($n / $ratingMax) * 100 : 0;
+                                ?>
+                                <div class="rating-col">
+                                    <div class="rating-col-track">
+                                        <span class="rating-col-fill<?php echo $n === 0 ? ' empty' : ''; ?>" data-height="<?php echo round($h, 1); ?>"></span>
+                                    </div>
+                                    <span class="rating-col-n"><?php echo $n; ?></span>
+                                    <span class="rating-col-label"><?php echo $s; ?>&#9733;</span>
+                                </div>
+                            <?php endfor; ?>
+                        </div>
+                    <?php else: ?>
+                        <p class="taste-empty">
+                            You've marked films as watched but haven't rated them.
+                            Rating tells the recommender what you actually enjoyed.
+                        </p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endif; ?>
+    </section>
+
+    <!-- Profile + sidebar -->
+    <div class="main-grid">
+        <div class="panel">
+            <div class="panel-header">
+                <h2 class="panel-title">Profile information</h2>
+                <span class="panel-badge">Account</span>
+            </div>
             <?php include("upprof.php"); ?>
         </div>
 
-        <!-- Right Side Management Panels -->
         <div class="side-column">
-            <!-- Account Security Panel -->
-            <div class="dash-panel">
+            <div class="panel">
                 <div class="panel-header">
-                    <h3 class="panel-title">Account Security</h3>
-                    <span class="panel-badge">Password</span>
+                    <h3 class="panel-title">Password</h3>
                 </div>
-                <div class="action-list">
-                    <div class="action-card-item">
-                        <h4 class="action-item-title">Security Credentials</h4>
-                        <p class="action-item-desc">Regularly updating your password helps keep your account and preferences secure.</p>
-                        <a href="changepassword.php" class="btn btn-secondary">Change Password</a>
-                    </div>
+                <div class="side-block">
+                    <p class="side-block-desc">Update your password periodically to keep your account and preferences secure.</p>
+                    <a href="changepassword.php" class="btn btn-secondary btn-block">Change password</a>
                 </div>
             </div>
 
-            <!-- Activity & Sign Out Panel -->
-            <div class="dash-panel">
+            <div class="panel">
                 <div class="panel-header">
-                    <h3 class="panel-title">Session Management</h3>
+                    <h3 class="panel-title">Session</h3>
                 </div>
-                <div class="action-list">
-                    <div class="action-card-item">
-                        <h4 class="action-item-title">Sign Out</h4>
-                        <p class="action-item-desc">End your active session securely. You can sign back in at any time.</p>
-                        <a href="logout.php" class="btn btn-danger btn-block">Log Out</a>
-                    </div>
+                <div class="side-block">
+                    <?php if ($lastWatchedLabel !== ''): ?>
+                        <p class="side-block-desc">Last film added on <?php echo htmlspecialchars($lastWatchedLabel); ?>. Signed in as <?php echo htmlspecialchars($userName); ?>.</p>
+                    <?php else: ?>
+                        <p class="side-block-desc">Sign out securely. You can sign back in any time.</p>
+                    <?php endif; ?>
+                    <a href="logout.php" class="btn btn-danger btn-block">Log out</a>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Watched Films Panel (moved here from watched.php) -->
-        <div class="dash-panel dash-panel-full">
-            <div class="panel-header">
-                <h2 class="panel-title">Your Watched Films</h2>
-                <span class="panel-badge"><?php echo $totalWatched; ?> total</span>
-            </div>
+    <!-- Watched films -->
+    <section class="panel watched-panel">
+        <div class="panel-header">
+            <h2 class="panel-title">Your watched films</h2>
+            <span class="panel-badge"><?php echo $totalWatched; ?> total</span>
+        </div>
 
-            <?php if (empty($watchedMovies)): ?>
-                <div class="watched-empty">
-                    <strong>You haven't marked any films as watched yet</strong>
-                    Browse the catalogue and mark films you've seen &mdash; each one feeds
-                    the recommendation engine, and rating them makes it sharper still.
-                    <div style="margin-top:16px;">
-                        <a href="index.php" class="btn btn-primary">Browse Movies</a>
-                    </div>
+        <?php if (empty($watchedMovies)): ?>
+            <div class="empty-state">
+                <strong>No films in your library yet</strong>
+                Browse the catalogue and mark films you've seen — each one feeds the
+                recommendation engine, and rating them makes it sharper still.
+                <div style="margin-top:16px;">
+                    <a href="index.php" class="btn btn-primary">Browse movies</a>
                 </div>
-            <?php else: ?>
-                <div class="watched-grid">
-                    <?php foreach ($watchedMovies as $movie): ?>
-                        <?php
-                            $poster = !empty($movie['poster_path'])
-                                ? $movie['poster_path']
-                                : 'default.jpg';
-                            $year   = !empty($movie['release_date'])
-                                ? substr($movie['release_date'], 0, 4)
-                                : '';
-                            $rating = (int) ($movie['rating'] ?? 0);
-                        ?>
-                        <a href="details.php?id=<?php echo (int) $movie['id']; ?>" class="watched-card">
+            </div>
+        <?php else: ?>
+            <?php $visibleLimit = 12; ?>
+            <div class="watched-grid" id="watchedGrid">
+                <?php foreach ($watchedMovies as $i => $movie): ?>
+                    <?php
+                        $poster = !empty($movie['poster_path']) ? $movie['poster_path'] : 'default.jpg';
+                        $year   = !empty($movie['release_date']) ? substr($movie['release_date'], 0, 4) : '';
+                        $rating = (int)($movie['rating'] ?? 0);
+                        $hiddenClass = $i >= $visibleLimit ? ' watched-hidden' : '';
+                    ?>
+                    <a href="details.php?id=<?php echo (int)$movie['id']; ?>"
+                       class="watched-card<?php echo $hiddenClass; ?>"
+                       <?php echo $i >= $visibleLimit ? 'data-extra="1"' : ''; ?>>
+                        <div class="watched-poster">
                             <img src="<?php echo htmlspecialchars($poster); ?>"
                                  alt="<?php echo htmlspecialchars($movie['original_title']); ?>"
                                  onerror="this.onerror=null;this.src='default.jpg';">
-                            <div class="watched-card-title">
-                                <?php echo htmlspecialchars($movie['original_title']); ?>
-                            </div>
-                            <?php if ($year !== ''): ?>
-                                <div class="watched-card-meta"><?php echo htmlspecialchars($year); ?></div>
-                            <?php endif; ?>
                             <?php if ($rating > 0): ?>
-                                <div class="watched-stars" title="You rated this <?php echo $rating; ?> out of 5">
-                                    <?php echo str_repeat('&#9733;', $rating) . str_repeat('&#9734;', 5 - $rating); ?>
-                                </div>
+                                <span class="poster-rating" title="You rated this <?php echo $rating; ?> / 5">&#9733; <?php echo $rating; ?></span>
                             <?php else: ?>
-                                <div class="watched-unrated">Not rated yet</div>
+                                <span class="poster-rating unrated" title="Not rated yet">Unrated</span>
                             <?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
+                        </div>
+                        <div class="watched-card-title"><?php echo htmlspecialchars($movie['original_title']); ?></div>
+                        <?php if ($year !== ''): ?>
+                            <div class="watched-card-meta"><?php echo htmlspecialchars($year); ?></div>
+                        <?php endif; ?>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+
+            <?php if (count($watchedMovies) > $visibleLimit): ?>
+                <div class="watched-more-wrap">
+                    <button type="button" id="watchedMoreBtn" class="btn btn-secondary"
+                            data-remaining="<?php echo count($watchedMovies) - $visibleLimit; ?>">
+                        Show all <?php echo count($watchedMovies); ?> films
+                    </button>
                 </div>
             <?php endif; ?>
-        </div>
-    </div>
+        <?php endif; ?>
+    </section>
+
 </div>
 
 <?php include("footer.php"); ?>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    // Reveal-on-load for the taste bars (a single, deliberate moment).
+    requestAnimationFrame(function () {
+        document.querySelectorAll(".genre-bar-fill").forEach(function (el) {
+            el.style.width = (el.dataset.width || 0) + "%";
+        });
+        document.querySelectorAll(".rating-col-fill").forEach(function (el) {
+            el.style.height = (el.dataset.height || 0) + "%";
+        });
+    });
+
+    // "Show all" for the watched grid.
+    var moreBtn = document.getElementById("watchedMoreBtn");
+    if (moreBtn) {
+        moreBtn.addEventListener("click", function () {
+            document.querySelectorAll('#watchedGrid [data-extra="1"]').forEach(function (el) {
+                el.classList.remove("watched-hidden");
+            });
+            moreBtn.parentElement.remove();
+        });
+    }
+});
+</script>
 
 </body>
 </html>

@@ -205,6 +205,33 @@ try {
             line-height: 1.35;
         }
 
+        .rec-themes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 7px;
+        }
+        .rec-theme-chip {
+            font-size: 10.5px;
+            color: #93c5fd;
+            background-color: #12203a;
+            border: 1px solid #24344f;
+            padding: 2px 7px;
+            border-radius: 999px;
+            line-height: 1.4;
+        }
+
+        .rec-plot {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 7px;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
         /* ---- Empty / loading states ---- */
         .rec-state {
             background-color: #181f2c;
@@ -270,6 +297,10 @@ document.addEventListener("DOMContentLoaded", function () {
         c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
     );
 
+    const chips = arr => (Array.isArray(arr) && arr.length)
+        ? `<div class="rec-themes">${arr.map(t => `<span class="rec-theme-chip">${esc(t)}</span>`).join("")}</div>`
+        : '';
+
     const card = movie => `
         <a href="details.php?id=${encodeURIComponent(movie.movie_id)}" class="movie-card">
             <img src="${esc(movie.poster)}" alt="${esc(movie.title)}"
@@ -279,6 +310,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 ? `<div class="match-badge">★ ${movie.match_percent}% Match</div>` : ''}
             ${movie.explanation
                 ? `<div class="rec-reason">${esc(movie.explanation)}</div>` : ''}
+            ${chips(movie.shared_themes)}
+            ${movie.overview
+                ? `<div class="rec-plot">${esc(movie.overview)}</div>` : ''}
         </a>`;
 
     fetch("knn_recommendations.php")
@@ -302,6 +336,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             const top  = data.filter(m => m.section === "top");
             const more = data.filter(m => m.section === "more");
+            const nepali = data.filter(m => m.section === "nepali");
 
             let html = "";
 
@@ -316,6 +351,12 @@ document.addEventListener("DOMContentLoaded", function () {
                            <span class="rec-section-note">refreshes daily</span>
                          </h2>
                          <div class="movie-grid">${more.map(card).join("")}</div>`;
+            }
+            if (nepali.length) {
+                html += `<h2 class="rec-section-heading">Nepali films for you
+                           <span class="rec-section-note">regional picks in your taste</span>
+                         </h2>
+                         <div class="movie-grid">${nepali.map(card).join("")}</div>`;
             }
             if (!html) {
                 html = `<div class="movie-grid">${data.map(card).join("")}</div>`;

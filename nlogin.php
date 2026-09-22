@@ -1,4 +1,13 @@
 <?php 
+    // Session-scoped cookies: the login lasts only for the current browser
+    // session and is dropped when the browser/tab session ends -- no 30-day
+    // "remember me" cookie is written anymore.
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path'     => '/',
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
     session_start();
     $conn = mysqli_connect('localhost', 'root', '', 'movie_db');
     
@@ -16,9 +25,17 @@
         if ($result) {
             if (mysqli_num_rows($result) > 0) {
                 $row = mysqli_fetch_assoc($result);
+                session_regenerate_id(true); // new session id on login
                 $_SESSION["uemail"] = $row['email'];
                 $_SESSION["show_mood_modal"] = true;
-                setcookie('uemail', $row['email'], time() + 60*60*24*30);
+                $_SESSION["fresh_login"] = true; // lets the landing tab authorise itself
+                // Session cookie (expires => 0): cleared when the browser closes.
+                setcookie('uemail', $row['email'], [
+                    'expires'  => 0,
+                    'path'     => '/',
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
                 header('Location: index.php');
                 exit();
             }

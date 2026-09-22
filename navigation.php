@@ -1,3 +1,43 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+$navAuthed  = !empty($_SESSION['uemail']);
+// The admin is a monitoring account: it must be able to open the public site
+// (adnav.php's "View Site" opens index.php in a new tab), so it is exempt from
+// the per-tab logout guard below. Regular users still get tab-close logout.
+$navIsAdmin = ($_SESSION['uemail'] ?? '') === 'snadmin@gmail.com';
+$navFresh   = !empty($_SESSION['fresh_login']);
+if ($navFresh) { unset($_SESSION['fresh_login']); } // consume once
+?>
+<?php if ($navAuthed && !$navIsAdmin): ?>
+<script>
+/* ---------------------------------------------------------------
+   Tab-close logout.
+   A tab authorises itself only for its own lifetime. sessionStorage is
+   per-tab and is wiped the instant the tab is closed, so a reopened tab
+   has no key and is sent to logout. A tab that just logged in sets the
+   key instead of logging out (the fresh-login handshake below).
+
+   Trade-off: the PHP session is shared across the browser, so opening the
+   site in a SECOND tab counts as an unauthorised tab and will log out too.
+   For "logged out when the browser closes" only (multi-tab friendly),
+   delete this whole <script> block -- the session cookies already handle
+   that on their own.
+   --------------------------------------------------------------- */
+(function () {
+  var KEY = "mr_tab_auth";
+  var fresh = <?php echo $navFresh ? 'true' : 'false'; ?>;
+  try {
+    if (fresh) {
+      sessionStorage.setItem(KEY, "1");        // this tab just logged in
+    } else if (!sessionStorage.getItem(KEY)) {
+      window.location.replace("logout.php");   // reopened / new tab -> log out
+    }
+  } catch (e) {
+    /* sessionStorage blocked: fall back to browser-close logout only */
+  }
+})();
+</script>
+<?php endif; ?>
 <style>
 header.site-header {
   background-color: #131924;

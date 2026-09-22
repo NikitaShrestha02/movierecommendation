@@ -535,3 +535,127 @@ function knn_recommend(array $model, array $watched, array $opts = []): array
 
     return array_slice($out, 0, $limit);
 }
+
+/**
+ * ---------------------------------------------------------------
+ * Score an EXPLICIT set of candidate films against the user's taste.
+ *
+ * Unlike knn_recommend(), which only considers films sharing a token
+ * with something watched, this scores exactly the ids you pass in --
+ * used for guaranteed rows such as "Nepali films for you", where the
+ * films must appear even if they don't overlap the (mostly English)
+ * viewing history. Films with no usable metadata are still returned,
+ * ranked last with a zero score, so the row is never empty.
+ *
+ * Scoring is otherwise identical to knn_recommend (K nearest watched
+ * neighbours + preference/mood profile + confidence), but candidates
+ * are NOT dropped when the score is <= 0.
+ *
+ * @param int[] $candidateIds
+ * @return array ranked [ ['id','score','predicted_rating','neighbour_id'], ... ]
+ * ---------------------------------------------------------------
+ */
+function knn_score_subset(array $model, array $watched, array $candidateIds, array $opts = []): array
+{
+    $vectors = $model['vectors'];
+    $idf     = $model['idf'];
+    $nnz     = $model['nnz'] ?? [];
+
+    $moodGenres = $opts['moodGenres']      ?? [];
+    $prefGenres = $opts['preferredGenres'] ?? [];
+    $limit      = $opts['limit']           ?? 10;
+    $k          = $opts['k']               ?? KNN_K;
+
+    $watchedIds = [];
+    $weights    = [];
+    $ratings    = [];
+    foreach ($watched as $w) {
+        $id = (int) $w['id'];
+        if (!isset($vectors[$id])) {
+            continue;
+        }
+        $watchedIds[] = $id;
+        $weights[$id] = knn_rating_weight($w['rating'] ?? null);
+        $ratings[$id] = ($w['rating'] ?? null) ? (float) $w['rating'] : 3.5;
+    }
+
+    $profileVec = [];
+    $profileNames = array_merge($prefGenres, $moodGenres);
+    if ($profileNames) {
+        $ptokens = [];
+        foreach ($profileNames as $n) {
+            foreach (knn_tokens_from_name(knn_normalise($n)) as $t) {
+                $ptokens[] = $t;
+            }
+        }
+        $profileVec = knn_vector($ptokens, $idf);
+    }
+
+    $profileWeight = $moodGenres ? 0.8 : 0.4;
+
+    $out  = [];
+    $seen = [];
+    foreach ($candidateIds as $cid) {
+        $cid = (int) $cid;
+        if (isset($seen[$cid])) {
+            continue;
+        }
+        $seen[$cid] = true;
+
+        // No usable metadata: keep as a low-priority fallback so the row fills.
+        if (!isset($vectors[$cid])) {
+            $out[] = ['id' => $cid, 'score' => 0.0, 'predicted_rating' => null, 'neighbour_id' => null];
+            continue;
+        }
+
+        $cvec       = $vectors[$cid];
+        $confidence = knn_confidence($nnz[$cid] ?? count($cvec));
+
+        $sims = [];
+        foreach ($watchedIds as $wid) {
+            $s = knn_cosine($vectors[$wid], $cvec);
+            if ($s >= KNN_MIN_SIM) {
+                $sims[$wid] = $s;
+            }
+        }
+        arsort($sims);
+        $neighbours = array_slice($sims, 0, $k, true);
+
+        $score   = 0.0;
+        $ratingW = 0.0;
+        $simSum  = 0.0;
+        $bestId  = null;
+        $bestSim = 0.0;
+        foreach ($neighbours as $wid => $sim) {
+            $score   += $weights[$wid] * $sim;
+            $ratingW += $sim * $ratings[$wid];
+            $simSum  += $sim;
+            if ($sim > $bestSim && $weights[$wid] > 0) {
+                $bestSim = $sim;
+                $bestId  = $wid;
+            }
+        }
+
+        $profileSim = $profileVec ? knn_cosine($profileVec, $cvec) : 0.0;
+        $score += $profileWeight * $profileSim;
+        $score *= $confidence;
+        if ($moodGenres) {
+            $score *= KNN_MOOD_BOOST;
+        }
+
+        $predicted = $simSum > 0
+            ? round(min(5.0, max(1.0, $ratingW / $simSum)), 1)
+            : null;
+
+        $out[] = [
+            'id'               => $cid,
+            'score'            => round($score, 5),
+            'predicted_rating' => $predicted,
+            'neighbour_id'     => $bestId,
+        ];
+    }
+
+    usort($out, fn($a, $b) => ($b['score'] <=> $a['score']) ?: ($a['id'] <=> $b['id']));
+
+    return array_slice($out, 0, $limit);
+}

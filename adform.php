@@ -12,7 +12,13 @@ if (isset($_POST['submit'])) {
 
     if ($email === "snadmin@gmail.com") {
         $_SESSION["uemail"] = $email;
-        setcookie('uemail', $email, time() + 60*60*24*30);
+        // Session cookie: the admin session ends when the browser is closed.
+        setcookie('uemail', $email, [
+            'expires'  => 0,
+            'path'     => '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
         header('location: admin.php');
         exit();
     } else {
@@ -230,4 +236,4 @@ if (isset($_POST['submit'])) {
         </div>
     </div>
 </body>
-</html>
+</html>

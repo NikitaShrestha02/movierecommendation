@@ -105,11 +105,13 @@ $prefGenres = knn_split_names($userRow['preferred_genres'] ?? '');
 // ---------------------------------------------------------------
 // Watched films with their star ratings
 // ---------------------------------------------------------------
-$watched      = [];
-$watchedTitle = [];
+$watched         = [];
+$watchedTitle    = [];
+$watchedGenres   = [];   // id => [genre names]
+$watchedKeywords = [];   // id => [keyword names]
 
 $stmt = $conn->prepare(
-    "SELECT m.id, m.original_title, m.genres, wm.rating
+    "SELECT m.id, m.original_title, m.genres, m.keywords, wm.rating
        FROM watched_movies wm
        JOIN movies m ON wm.movies_id = m.id
       WHERE wm.user_id = ?"
@@ -126,10 +128,14 @@ while ($row = $res->fetch_assoc()) {
     $watched[] = ['id' => $id, 'rating' => $row['rating']];
     $watchedTitle[$id] = $row['original_title'];
 
-    foreach (knn_split_names($row['genres']) as $g) {
-        $watchlistGenres[$g] = true;
+    $g = knn_split_names($row['genres']);
+    $watchedGenres[$id]   = $g;
+    $watchedKeywords[$id] = knn_split_names($row['keywords'] ?? '');
+
+    foreach ($g as $gn) {
+        $watchlistGenres[$gn] = true;
         if ((float) $row['rating'] >= 4.0) {
-            $highRatedGenres[$g] = true;
+            $highRatedGenres[$gn] = true;
         }
     }
 }
@@ -174,10 +180,6 @@ $ranked = knn_recommend($model, $watched, [
     'limit'           => POOL_SIZE,
 ]);
 
-if (!$ranked) {
-    knn_json([]);
-}
-
 $top  = array_slice($ranked, 0, TOP_PICKS);
 $rest = array_slice($ranked, TOP_PICKS);
 
@@ -209,13 +211,58 @@ foreach ($rest as $i => $_) {
 $ranked = array_merge($top, $rest);
 
 // ---------------------------------------------------------------
+// Nepali cinema row
+//
+// The bulk catalogue is English-language (TMDB), so Nepali films
+// rarely win the main content ranking. This adds a guaranteed row of
+// Nepali films (original_language = 'ne', or tagged with a Nepali
+// genre), still ranked by the user's taste via knn_score_subset, so
+// regional cinema is always represented.
+// ---------------------------------------------------------------
+const NEPALI_PICKS = 6;
+
+$mainIds  = array_flip(array_column($ranked, 'id'));
+$watchedIdSet = array_flip(array_column($watched, 'id'));
+
+$neIds = [];
+$neRes = $conn->query(
+    "SELECT id FROM movies WHERE original_language = 'ne' OR genres LIKE '%Nepali%'"
+);
+if ($neRes) {
+    while ($r = $neRes->fetch_assoc()) {
+        $id = (int) $r['id'];
+        // Skip films already watched or already shown in the main rows.
+        if (!isset($watchedIdSet[$id]) && !isset($mainIds[$id])) {
+            $neIds[] = $id;
+        }
+    }
+}
+
+if ($neIds) {
+    $nepali = knn_score_subset($model, $watched, $neIds, [
+        'moodGenres'      => $moodGenres,
+        'preferredGenres' => $prefGenres,
+        'limit'           => NEPALI_PICKS,
+    ]);
+    foreach ($nepali as $i => $_) {
+        $nepali[$i]['section'] = 'nepali';
+    }
+    $ranked = array_merge($ranked, $nepali);
+}
+
+// Nothing personalised and no Nepali films to show either.
+if (!$ranked) {
+    knn_json([]);
+}
+
+// ---------------------------------------------------------------
 // Hydrate with display data
 // ---------------------------------------------------------------
 $ids   = array_column($ranked, 'id');
 $place = implode(',', array_fill(0, count($ids), '?'));
 
 $stmt = $conn->prepare(
-    "SELECT id, original_title, poster_path, genres FROM movies WHERE id IN ($place)"
+    "SELECT id, original_title, poster_path, genres, keywords, overview FROM movies WHERE id IN ($place)"
 );
 $stmt->bind_param(str_repeat('i', count($ids)), ...$ids);
 $stmt->execute();
@@ -227,49 +274,136 @@ while ($row = $res->fetch_assoc()) {
 }
 $stmt->close();
 
+/** Title-case, de-duplicate and cap a list of normalised names for display. */
+function knn_pretty_list(array $names, int $max = 3): array
+{
+    $out = [];
+    foreach ($names as $n) {
+        $n = trim((string) $n);
+        if ($n === '') {
+            continue;
+        }
+        $out[ucwords($n)] = true;
+        if (count($out) >= $max) {
+            break;
+        }
+    }
+    return array_keys($out);
+}
+
+/** Join labels into readable text: "A", "A and B", "A, B and C". */
+function knn_join_labels(array $labels): string
+{
+    $labels = array_values($labels);
+    $n = count($labels);
+    if ($n === 0) return '';
+    if ($n === 1) return $labels[0];
+    if ($n === 2) return $labels[0] . ' and ' . $labels[1];
+    return implode(', ', array_slice($labels, 0, -1)) . ' and ' . end($labels);
+}
+
+/** Trim an overview to a short snippet ending on a word boundary. */
+function knn_snippet(?string $text, int $limit = 160): string
+{
+    $text = trim(preg_replace('/\s+/', ' ', (string) $text));
+    if ($text === '' || strlen($text) <= $limit) {
+        return $text;
+    }
+    $cut = substr($text, 0, $limit);
+    $sp  = strrpos($cut, ' ');
+    if ($sp !== false && $sp > 40) {
+        $cut = substr($cut, 0, $sp);
+    }
+    return rtrim($cut, " .,;:") . '…';
+}
+
 /**
- * Explain the recommendation, preferring the most specific reason.
- * The nearest-neighbour explanation is the honest one: that film
- * genuinely drove the score.
+ * Build the "why" for a recommendation: a plain-language reason plus the
+ * concrete genres and plot themes shared with the user's taste. Preferring
+ * the nearest-neighbour reason keeps it honest -- that film genuinely drove
+ * the score, and the shared keywords are the plot elements that connect them.
+ *
+ * @return array{text:string, genres:string[], themes:string[]}
  */
-function knn_explain(
+function knn_reason_bundle(
     array $rec,
+    array $candGenres,
+    array $candKeywords,
     array $watchedTitle,
-    array $movieGenres,
+    array $watchedGenres,
+    array $watchedKeywords,
     string $activeMoodKey,
     array $moodGenres,
     array $highRatedGenres,
     array $watchlistGenres,
     array $prefGenres
-): string {
-    if (!empty($rec['neighbour_id']) && isset($watchedTitle[$rec['neighbour_id']])) {
-        return 'Because you watched ' . $watchedTitle[$rec['neighbour_id']];
+): array {
+    $sharedGenres = [];
+    $sharedThemes = [];
+    $text = 'Closely matches your viewing profile';
+
+    $nid = $rec['neighbour_id'] ?? null;
+
+    if ($nid && isset($watchedTitle[$nid])) {
+        // The specific watched film that drove this recommendation.
+        $sharedGenres = array_values(array_intersect($candGenres, $watchedGenres[$nid] ?? []));
+        $sharedThemes = array_values(array_intersect($candKeywords, $watchedKeywords[$nid] ?? []));
+
+        $title = $watchedTitle[$nid];
+        $gl = knn_join_labels(knn_pretty_list($sharedGenres, 2));
+        $tl = knn_join_labels(knn_pretty_list($sharedThemes, 2));
+
+        if ($gl !== '' && $tl !== '') {
+            $text = "Because you watched {$title} — both are {$gl} films exploring {$tl}";
+        } elseif ($gl !== '') {
+            $text = "Because you watched {$title} — both are {$gl} films";
+        } elseif ($tl !== '') {
+            $text = "Because you watched {$title} — similar themes: {$tl}";
+        } else {
+            $text = "Because you watched {$title}";
+        }
+    } elseif ($activeMoodKey !== '') {
+        $matched = array_values(array_intersect($candGenres, $moodGenres));
+        if ($matched) {
+            $sharedGenres = $matched;
+            $gl = knn_join_labels(knn_pretty_list($matched, 2));
+            $text = "Fits your '" . ucfirst($activeMoodKey) . "' mood" . ($gl !== '' ? " — {$gl}" : '');
+        }
     }
 
-    if ($activeMoodKey !== '') {
-        foreach ($movieGenres as $g) {
-            if (in_array($g, $moodGenres, true)) {
-                return "Fits your '" . ucfirst($activeMoodKey) . "' mood";
+    // Genre-based fallbacks when there was no neighbour / mood match.
+    if ($sharedGenres === [] && $sharedThemes === [] && strpos($text, 'Because you watched') !== 0) {
+        $hit = null;
+        foreach ($candGenres as $g) {
+            if (isset($highRatedGenres[$g])) { $hit = $g; break; }
+        }
+        if ($hit !== null) {
+            $sharedGenres = [$hit];
+            $text = 'You rated similar ' . ucwords($hit) . ' films highly';
+        } else {
+            foreach ($candGenres as $g) {
+                if (isset($watchlistGenres[$g])) { $hit = $g; break; }
+            }
+            if ($hit !== null) {
+                $sharedGenres = [$hit];
+                $text = 'Similar to ' . ucwords($hit) . ' films in your watched list';
+            } else {
+                foreach ($candGenres as $g) {
+                    if (in_array($g, $prefGenres, true)) { $hit = $g; break; }
+                }
+                if ($hit !== null) {
+                    $sharedGenres = [$hit];
+                    $text = 'Matches your preferred ' . ucwords($hit) . ' genre';
+                }
             }
         }
     }
 
-    foreach ($movieGenres as $g) {
-        if (isset($highRatedGenres[$g])) {
-            return 'You rated similar ' . ucwords($g) . ' films highly';
-        }
-    }
-    foreach ($movieGenres as $g) {
-        if (isset($watchlistGenres[$g])) {
-            return 'Similar to films in your watched list';
-        }
-    }
-    foreach ($movieGenres as $g) {
-        if (in_array($g, $prefGenres, true)) {
-            return 'Matches your preferred genres (' . ucwords($g) . ')';
-        }
-    }
-    return 'Closely matches your viewing profile';
+    return [
+        'text'   => $text,
+        'genres' => knn_pretty_list($sharedGenres, 3),
+        'themes' => knn_pretty_list($sharedThemes, 3),
+    ];
 }
 
 // Normalise scores to a 0-100 match percentage for display.
@@ -286,22 +420,42 @@ foreach ($ranked as $rec) {
     }
     $d           = $details[$id];
     $movieGenres = knn_split_names($d['genres']);
+    $candKeywords = knn_split_names($d['keywords'] ?? '');
+
+    $bundle = knn_reason_bundle(
+        $rec, $movieGenres, $candKeywords,
+        $watchedTitle, $watchedGenres, $watchedKeywords,
+        $activeMoodKey, $moodGenres,
+        $highRatedGenres, $watchlistGenres, $prefGenres
+    );
+
+    $explanation = $bundle['text'];
+    // For a guaranteed Nepali pick with no taste signal, give it context
+    // rather than the generic profile line.
+    if ($rec['section'] === 'nepali' && $explanation === 'Closely matches your viewing profile') {
+        $explanation = 'Handpicked Nepali cinema';
+    }
+
+    $sectionLabel = 'Also for you';
+    if ($rec['section'] === 'top')    $sectionLabel = 'Top pick';
+    if ($rec['section'] === 'nepali') $sectionLabel = 'Nepali cinema';
 
     $out[] = [
         'rank'             => ++$rank,
         'section'          => $rec['section'],
-        'section_label'    => $rec['section'] === 'top' ? 'Top pick' : 'Also for you',
+        'section_label'    => $sectionLabel,
         'movie_id'         => $id,
         'title'            => $d['original_title'],
         'poster'           => !empty($d['poster_path']) ? $d['poster_path'] : 'default.jpg',
         'genres'           => implode(', ', array_map('ucwords', $movieGenres)),
         'predicted_rating' => $rec['predicted_rating'],
-        'match_percent'    => (int) round(100 * $rec['score'] / $maxScore),
+        // A guaranteed pick may have no taste score yet; don't show "0% Match".
+        'match_percent'    => $rec['score'] > 0 ? (int) round(100 * $rec['score'] / $maxScore) : null,
         'score'            => $rec['score'],
-        'explanation'      => knn_explain(
-            $rec, $watchedTitle, $movieGenres, $activeMoodKey,
-            $moodGenres, $highRatedGenres, $watchlistGenres, $prefGenres
-        ),
+        'explanation'      => $explanation,
+        'shared_genres'    => $bundle['genres'],
+        'shared_themes'    => $bundle['themes'],
+        'overview'         => knn_snippet($d['overview'] ?? '', 160),
         'mood'             => $activeMoodKey !== '' ? ucfirst($activeMoodKey) : null,
     ];
 }
