@@ -7,6 +7,12 @@ $navAuthed  = !empty($_SESSION['uemail']);
 $navIsAdmin = ($_SESSION['uemail'] ?? '') === 'snadmin@gmail.com';
 $navFresh   = !empty($_SESSION['fresh_login']);
 if ($navFresh) { unset($_SESSION['fresh_login']); } // consume once
+
+$navLoginToast = '';
+if (!empty($_SESSION['just_logged_in'])) {
+    $navLoginToast = $_SESSION['just_logged_in'];
+    unset($_SESSION['just_logged_in']);
+}
 ?>
 <?php if ($navAuthed && !$navIsAdmin): ?>
 <script>
@@ -427,6 +433,107 @@ header.site-header {
   text-align: center;
   line-height: 1.25;
 }
+
+/* ── Floating Login Toast Notification ── */
+.nav-toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 999999;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.nav-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #182234;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  border-radius: 10px;
+  padding: 14px 16px 18px;
+  min-width: 310px;
+  max-width: 380px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: all;
+  position: relative;
+  overflow: hidden;
+  animation: navToastSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes navToastSlideIn {
+  from { opacity: 0; transform: translateX(70px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes navToastSlideOut {
+  to   { opacity: 0; transform: translateX(90px); }
+}
+.nav-toast.hiding {
+  animation: navToastSlideOut 0.3s ease forwards;
+}
+.nav-toast-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.nav-toast-body { flex: 1; }
+.nav-toast-title {
+  color: #f8fafc;
+  font-size: 13.5px;
+  font-weight: 700;
+  margin: 0 0 3px;
+  letter-spacing: -0.01em;
+}
+.nav-toast-msg {
+  color: #94a3b8;
+  font-size: 12.5px;
+  margin: 0;
+  line-height: 1.45;
+}
+.nav-toast-msg strong {
+  color: #f1f5f9;
+}
+.nav-toast-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.nav-toast-close:hover { color: #f1f5f9; }
+.nav-toast-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: rgba(34, 197, 94, 0.15);
+}
+.nav-toast-progress-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #16a34a, #22c55e);
+  animation: navToastProgress 4.5s linear forwards;
+}
+@keyframes navToastProgress {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
 </style>
 
 <?php 
@@ -677,3 +784,36 @@ if (isset($_SESSION['show_mood_modal']) && $_SESSION['show_mood_modal'] === true
     }
   });
 </script>
+
+<!-- Login Toast container -->
+<div class="nav-toast-container" id="navToastContainer"></div>
+
+<?php if (!empty($navLoginToast)): ?>
+<script>
+(function() {
+  var userName = <?php echo json_encode($navLoginToast); ?>;
+  var container = document.getElementById('navToastContainer');
+  if (!container) return;
+
+  var toastEl = document.createElement('div');
+  toastEl.className = 'nav-toast';
+  toastEl.innerHTML =
+    '<div class="nav-toast-icon">✓</div>' +
+    '<div class="nav-toast-body">' +
+      '<div class="nav-toast-title">Signed In Successfully</div>' +
+      '<div class="nav-toast-msg">Welcome back, <strong>' + (userName.replace(/</g, "&lt;").replace(/>/g, "&gt;")) + '</strong>! Enjoy your movie journey.</div>' +
+    '</div>' +
+    '<button class="nav-toast-close" title="Close" aria-label="Close">&times;</button>' +
+    '<div class="nav-toast-progress"><div class="nav-toast-progress-fill"></div></div>';
+
+  function dismiss() {
+    toastEl.classList.add('hiding');
+    setTimeout(function() { toastEl.remove(); }, 300);
+  }
+
+  toastEl.querySelector('.nav-toast-close').addEventListener('click', dismiss);
+  container.appendChild(toastEl);
+  setTimeout(dismiss, 4500);
+})();
+</script>
+<?php endif; ?>

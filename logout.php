@@ -1,6 +1,9 @@
 <?php
     session_start();
 
+    // Check if the current session belongs to the admin
+    $wasAdmin = isset($_SESSION['uemail']) && $_SESSION['uemail'] === 'snadmin@gmail.com';
+
     // Clear all session data.
     $_SESSION = [];
 
@@ -27,6 +30,10 @@
 
     session_destroy();
 
-    header('location: nlogin.php');
+    if ($wasAdmin) {
+        header('Location: adform.php?action=logout');
+    } else {
+        header('Location: nlogin.php?action=logout');
+    }
     exit();
 ?>

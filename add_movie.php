@@ -59,7 +59,7 @@ if (isset($_POST['submit'])) {
 
             if (mysqli_stmt_execute($insert_stmt)) {
                 mysqli_stmt_close($insert_stmt);
-                header('Location: admin.php');
+                header('Location: admin.php?movie_added=1');
                 exit();
             } else {
                 echo "<script>alert('Error inserting data: " . mysqli_error($conn) . "');</script>";

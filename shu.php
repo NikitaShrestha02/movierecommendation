@@ -12,25 +12,28 @@ include('connection.php');
 
 if (isset($_GET['delete'])) {
     $delete_id = (int)$_GET['delete'];
-    $check_bookings_query = "SELECT id FROM bookings WHERE user_id='$delete_id'";
-    $check_result = mysqli_query($conn, $check_bookings_query);
-    if ($check_result) {
-        while ($row = mysqli_fetch_assoc($check_result)) {
-            $booking_id = $row['id'];
-            mysqli_query($conn, "DELETE FROM bookings WHERE id='$booking_id'");
-        }
-    }
-    // Also clean up watched movies by this user to maintain relational integrity
-    mysqli_query($conn, "DELETE FROM watched_movies WHERE user_id='$delete_id'");
 
-    $delete_user_query = "DELETE FROM user WHERE id='$delete_id'";
-    $delete_user_result = mysqli_query($conn, $delete_user_query);
-    
-    if ($delete_user_result) {
-        header('Location: shu.php'); 
+    // Disable FK checks so no related table blocks the delete
+    mysqli_query($conn, "SET FOREIGN_KEY_CHECKS = 0");
+
+    // Clean up watched_movies linked to this user
+    mysqli_query($conn, "DELETE FROM watched_movies WHERE user_id = $delete_id");
+
+    // Delete the user
+    $delete_user_result = mysqli_query($conn, "DELETE FROM user WHERE id = $delete_id");
+    // Capture IMMEDIATELY before any other query resets it
+    $affected = mysqli_affected_rows($conn);
+
+    // Re-enable FK checks
+    mysqli_query($conn, "SET FOREIGN_KEY_CHECKS = 1");
+
+    if ($delete_user_result && $affected > 0) {
+        header('Location: shu.php?deleted=1');
         exit();
+    } elseif ($delete_user_result && $affected === 0) {
+        die('No user found with that ID. Nothing was deleted.');
     } else {
-        die('Failed to delete user: ' . mysqli_error($conn));
+        die('Failed to delete user (ID: ' . $delete_id . '): ' . mysqli_error($conn));
     }
 }
 ?>
@@ -153,11 +156,141 @@ if (isset($_GET['delete'])) {
             color: #ffffff;
             border-color: #dc2626;
         }
-    </style>
-    <script>
-        function confirmDelete() {
-            return confirm('Are you sure you want to permanently delete this user and all associated records?');
+        /* ── Confirm Delete Modal ── */
+        .confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.65);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            animation: overlayIn 0.25s ease;
         }
+        .confirm-overlay.active { display: flex; }
+        @keyframes overlayIn {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        .confirm-modal {
+            background: linear-gradient(145deg, #1a2438, #1e2d42);
+            border: 1px solid rgba(239,68,68,0.25);
+            border-radius: 14px;
+            padding: 36px 32px 28px;
+            max-width: 380px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 0 50px rgba(239,68,68,0.12), 0 20px 60px rgba(0,0,0,0.5);
+            animation: modalIn 0.35s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        @keyframes modalIn {
+            from { transform: scale(0.78) translateY(16px); opacity: 0; }
+            to   { transform: scale(1) translateY(0);        opacity: 1; }
+        }
+        .confirm-icon {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 18px;
+            background: rgba(239,68,68,0.12);
+            border: 1.5px solid rgba(239,68,68,0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        .confirm-title {
+            color: #f8fafc;
+            font-size: 18px;
+            font-weight: 700;
+            margin: 0 0 8px;
+        }
+        .confirm-msg {
+            color: #94a3b8;
+            font-size: 13.5px;
+            line-height: 1.6;
+            margin: 0 0 6px;
+        }
+        .confirm-username {
+            color: #f87171;
+            font-weight: 600;
+        }
+        .confirm-warn {
+            font-size: 12px;
+            color: #64748b;
+            margin: 0 0 24px;
+        }
+        .confirm-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn-cancel {
+            flex: 1;
+            padding: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #2d384c;
+            background: #131924;
+            color: #94a3b8;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background 0.2s, color 0.2s;
+        }
+        .btn-cancel:hover { background: #1e2d42; color: #f1f5f9; }
+        .btn-confirm-delete {
+            flex: 1;
+            padding: 10px 0;
+            border-radius: 8px;
+            border: none;
+            background: linear-gradient(135deg, #b91c1c, #ef4444);
+            color: #fff;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            box-shadow: 0 4px 14px rgba(239,68,68,0.3);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .btn-confirm-delete:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 18px rgba(239,68,68,0.45);
+        }
+    </style>
+
+    <!-- Confirm Delete Modal -->
+    <div class="confirm-overlay" id="confirmOverlay">
+        <div class="confirm-modal">
+            <div class="confirm-icon">🗑️</div>
+            <h2 class="confirm-title">Delete User?</h2>
+            <p class="confirm-msg">You are about to permanently delete <span class="confirm-username" id="confirmUserName"></span>.</p>
+            <p class="confirm-warn">This will also remove all their watched movies and ratings. This action cannot be undone.</p>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
+                <a id="confirmDeleteLink" href="#" class="btn-confirm-delete">Yes, Delete</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openConfirm(userId, userName) {
+            document.getElementById('confirmUserName').textContent = userName;
+            document.getElementById('confirmDeleteLink').href = 'shu.php?delete=' + userId;
+            document.getElementById('confirmOverlay').classList.add('active');
+        }
+        function closeConfirm() {
+            document.getElementById('confirmOverlay').classList.remove('active');
+        }
+        // Close on backdrop click
+        document.getElementById('confirmOverlay').addEventListener('click', function(e) {
+            if (e.target === this) closeConfirm();
+        });
+        // Close on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeConfirm();
+        });
     </script>
 </head>
 <body>
@@ -196,8 +329,8 @@ if (isset($_GET['delete'])) {
                             <td><?php echo htmlspecialchars($fetch_user['contact'] ?? '—'); ?></td>
                             <td><?php echo htmlspecialchars($fetch_user['address'] ?? '—'); ?></td>
                             <td>
-                                <a href="shu.php?delete=<?php echo $fetch_user['id']; ?>" class="delete-btn" 
-                                   onclick="return confirmDelete();">Delete User</a>
+                                <button class="delete-btn"
+                                        onclick="openConfirm(<?php echo $fetch_user['id']; ?>, '<?php echo addslashes(htmlspecialchars($fetch_user['name'])); ?>')">Delete User</button>
                             </td>
                         </tr>
                     <?php

@@ -12,6 +12,7 @@ if (isset($_POST['submit'])) {
 
     if ($email === "snadmin@gmail.com") {
         $_SESSION["uemail"] = $email;
+        $_SESSION["just_logged_in"] = "Administrator";
         // Session cookie: the admin session ends when the browser is closed.
         setcookie('uemail', $email, [
             'expires'  => 0,
@@ -195,6 +196,90 @@ if (isset($_POST['submit'])) {
             color: #93c5fd;
             text-decoration: underline;
         }
+
+        /* ── Toast Notifications ── */
+        .toast-container {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: none;
+        }
+        .toast {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            background: #1a2438;
+            border-radius: 10px;
+            padding: 14px 16px 18px;
+            min-width: 300px;
+            max-width: 360px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.45);
+            pointer-events: all;
+            position: relative;
+            overflow: hidden;
+            animation: toastSlideIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+        }
+        .toast.toast-success { border: 1px solid rgba(34,197,94,0.35); }
+        .toast.toast-error   { border: 1px solid rgba(239,68,68,0.35); }
+
+        @keyframes toastSlideIn {
+            from { opacity: 0; transform: translateX(60px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes toastSlideOut {
+            to   { opacity: 0; transform: translateX(80px); }
+        }
+        .toast.hiding {
+            animation: toastSlideOut 0.3s ease forwards;
+        }
+        .toast-icon {
+            font-size: 20px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        .toast-body { flex: 1; }
+        .toast-title {
+            color: #f8fafc;
+            font-size: 13.5px;
+            font-weight: 700;
+            margin: 0 0 3px;
+        }
+        .toast-msg {
+            color: #94a3b8;
+            font-size: 12.5px;
+            margin: 0;
+            line-height: 1.4;
+        }
+        .toast-close {
+            background: none; border: none;
+            color: #64748b; font-size: 16px;
+            cursor: pointer; padding: 0;
+            line-height: 1; flex-shrink: 0;
+            transition: color 0.15s;
+        }
+        .toast-close:hover { color: #f1f5f9; }
+        .toast-progress {
+            position: absolute;
+            bottom: 0; left: 0;
+            height: 3px; width: 100%;
+            border-radius: 0 0 10px 10px;
+        }
+        .toast-success .toast-progress { background: linear-gradient(90deg,#16a34a,#22c55e); }
+        .toast-error   .toast-progress { background: linear-gradient(90deg,#b91c1c,#ef4444); }
+        .toast-progress-fill {
+            height: 100%; width: 100%;
+            animation: toastProgress 4s linear forwards;
+        }
+        .toast-success .toast-progress-fill { background: rgba(34,197,94,0.25); }
+        .toast-error   .toast-progress-fill { background: rgba(239,68,68,0.25); }
+        @keyframes toastProgress {
+            from { width: 100%; }
+            to   { width: 0%; }
+        }
     </style>
 </head>
 <body>
@@ -208,11 +293,12 @@ if (isset($_POST['submit'])) {
         <p class="login-subtitle">Enter administrator credentials to manage the platform</p>
 
         <?php
+        $toasts = [];
         if (isset($_GET['action']) && $_GET['action'] === 'logout') {
-            echo "<div class='alert alert-success'>You have been successfully logged out.</div>";
+            $toasts[] = ['type' => 'success', 'title' => 'Logged Out', 'msg' => 'Administrator session ended successfully.'];
         }
         if (isset($_SESSION["login_error"]) && !empty($_SESSION["login_error"])) {
-            echo "<div class='alert alert-error'>" . htmlspecialchars($_SESSION['login_error']) . "</div>";
+            $toasts[] = ['type' => 'error', 'title' => 'Access Denied', 'msg' => htmlspecialchars($_SESSION['login_error'])];
             $_SESSION["login_error"] = "";
         }
         ?>
@@ -235,5 +321,35 @@ if (isset($_POST['submit'])) {
             Return to <a href="nlogin.php">User Portal</a>
         </div>
     </div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+var toasts = <?php echo json_encode($toasts ?? []); ?>;
+var icons  = { success: '✅', error: '❌' };
+
+function dismissToast(el) {
+    el.classList.add('hiding');
+    setTimeout(function() { el.remove(); }, 300);
+}
+
+toasts.forEach(function(t, i) {
+    setTimeout(function() {
+        var el = document.createElement('div');
+        el.className = 'toast toast-' + t.type;
+        el.innerHTML =
+            '<span class="toast-icon">' + icons[t.type] + '</span>' +
+            '<div class="toast-body">' +
+                '<p class="toast-title">' + t.title + '</p>' +
+                '<p class="toast-msg">' + t.msg + '</p>' +
+            '</div>' +
+            '<button class="toast-close" onclick="dismissToast(this.parentElement)">&times;</button>' +
+            '<div class="toast-progress"><div class="toast-progress-fill"></div></div>';
+        document.getElementById('toastContainer').appendChild(el);
+        setTimeout(function() { dismissToast(el); }, 4000);
+    }, i * 200);
+});
+</script>
 </body>
 </html>
