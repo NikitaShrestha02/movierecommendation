@@ -69,6 +69,26 @@ if ($watchedStmt) {
     $watchedStmt->close();
 }
 
+// Fetch inquiries submitted by this user
+$userInquiries = [];
+$inqStmt = $conn->prepare(
+    "SELECT id, subject, message, status, admin_reply, replied_at, created_at 
+       FROM contact_inquiries 
+      WHERE user_id = ? OR email = ? 
+   ORDER BY created_at DESC"
+);
+if ($inqStmt) {
+    $inqStmt->bind_param("is", $userId, $loggedInEmail);
+    $inqStmt->execute();
+    $inqRes = $inqStmt->get_result();
+    while ($iRow = $inqRes->fetch_assoc()) {
+        $userInquiries[] = $iRow;
+    }
+    $inqStmt->close();
+}
+$userInqCount = count($userInquiries);
+$userInqReplied = count(array_filter($userInquiries, fn($inq) => !empty($inq['admin_reply'])));
+
 // Parse preferred genres
 $preferredGenresList = [];
 if (!empty($preferredGenresRaw)) {
@@ -543,6 +563,128 @@ $avgStars = (int)round($avgRating);
         .empty-state { text-align: center; padding: 34px 20px; color: var(--text-dim); font-size: 13.5px; line-height: 1.6; }
         .empty-state strong { display: block; color: #e2e8f0; font-size: 15px; margin-bottom: 6px; }
 
+        /* Inquiries Panel */
+        .inquiry-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .inquiry-card {
+            background-color: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 18px 20px;
+            transition: border-color 0.2s;
+        }
+        .inquiry-card:hover {
+            border-color: var(--border-2);
+        }
+        .inquiry-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .inquiry-ref {
+            font-family: monospace;
+            font-weight: 700;
+            color: var(--accent);
+            font-size: 13.5px;
+        }
+        .inquiry-subject {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            padding: 3px 9px;
+            border-radius: 4px;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text);
+            margin-left: 6px;
+        }
+        .inquiry-date {
+            color: var(--text-mute);
+            font-size: 12px;
+        }
+        .inquiry-msg {
+            color: var(--text);
+            font-size: 13.5px;
+            line-height: 1.55;
+            margin: 0 0 14px 0;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px 14px;
+            border-radius: 6px;
+            border-left: 3px solid var(--border-2);
+        }
+        .inquiry-reply-box {
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(16, 185, 129, 0.08));
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-left: 4px solid var(--accent);
+            border-radius: 6px;
+            padding: 14px 16px;
+            margin-top: 10px;
+        }
+        .inquiry-reply-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .inquiry-reply-title {
+            color: #93c5fd;
+            font-size: 12.5px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .inquiry-reply-date {
+            color: var(--text-mute);
+            font-size: 11.5px;
+        }
+        .inquiry-reply-text {
+            color: #f1f5f9;
+            font-size: 13.5px;
+            line-height: 1.6;
+            margin: 0;
+            white-space: pre-wrap;
+        }
+        .inquiry-pending-box {
+            color: var(--text-mute);
+            font-size: 12.5px;
+            font-style: italic;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .badge-status {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        .badge-status-unread {
+            background-color: rgba(245, 158, 11, 0.12);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .badge-status-progress {
+            background-color: rgba(59, 130, 246, 0.12);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+        .badge-status-resolved {
+            background-color: rgba(16, 185, 129, 0.12);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
         @media (max-width: 880px) {
             .main-grid { grid-template-columns: 1fr; }
             .taste-grid { grid-template-columns: 1fr; gap: 26px; }
@@ -791,6 +933,84 @@ $avgStars = (int)round($avgRating);
                     </button>
                 </div>
             <?php endif; ?>
+        <?php endif; ?>
+    </section>
+
+    <!-- My Inquiries & Support Responses -->
+    <section class="panel" id="inquiriesSection">
+        <div class="panel-header">
+            <div>
+                <h2 class="panel-title" style="display:inline-block; margin-right:8px;">My Inquiries &amp; Support Messages</h2>
+                <?php if ($userInqReplied > 0): ?>
+                    <span style="font-size:11px; font-weight:700; color:#34d399; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); padding:2px 8px; border-radius:999px;">
+                        <?php echo $userInqReplied; ?> Answered
+                    </span>
+                <?php endif; ?>
+            </div>
+            <a href="contact.php" class="btn btn-secondary" style="padding:6px 14px; font-size:12.5px;">+ New Inquiry</a>
+        </div>
+
+        <?php if (empty($userInquiries)): ?>
+            <div class="empty-state">
+                <strong>No support inquiries yet</strong>
+                Have questions about recommendations, noticed an issue, or want a movie added to our collection?
+                <div style="margin-top:16px;">
+                    <a href="contact.php" class="btn btn-primary">Contact Support &rarr;</a>
+                </div>
+            </div>
+        <?php else: ?>
+            <div class="inquiry-list">
+                <?php foreach ($userInquiries as $inq): ?>
+                    <?php 
+                        $inqRef = '#INQ-' . str_pad($inq['id'], 4, '0', STR_PAD_LEFT);
+                        $createdDate = date('M d, Y h:i A', strtotime($inq['created_at']));
+                        $statusClass = 'badge-status-unread';
+                        $statusLabel = 'Pending Review';
+                        if ($inq['status'] === 'in_progress') {
+                            $statusClass = 'badge-status-progress';
+                            $statusLabel = 'Under Review';
+                        } elseif ($inq['status'] === 'resolved') {
+                            $statusClass = 'badge-status-resolved';
+                            $statusLabel = 'Resolved';
+                        }
+                    ?>
+                    <div class="inquiry-card">
+                        <div class="inquiry-top">
+                            <div>
+                                <span class="inquiry-ref"><?php echo $inqRef; ?></span>
+                                <span class="inquiry-subject"><?php echo htmlspecialchars($inq['subject']); ?></span>
+                                <span class="badge-status <?php echo $statusClass; ?>" style="margin-left:6px;"><?php echo $statusLabel; ?></span>
+                            </div>
+                            <span class="inquiry-date"><?php echo $createdDate; ?></span>
+                        </div>
+
+                        <div class="inquiry-msg">
+                            <strong style="color:var(--text-dim); display:block; font-size:11.5px; text-transform:uppercase; margin-bottom:4px;">Your Message:</strong>
+                            <?php echo nl2br(htmlspecialchars($inq['message'])); ?>
+                        </div>
+
+                        <?php if (!empty($inq['admin_reply'])): ?>
+                            <div class="inquiry-reply-box">
+                                <div class="inquiry-reply-header">
+                                    <div class="inquiry-reply-title">
+                                        🛡️ Support Team Response
+                                    </div>
+                                    <?php if (!empty($inq['replied_at'])): ?>
+                                        <div class="inquiry-reply-date">
+                                            Replied on <?php echo date('M d, Y h:i A', strtotime($inq['replied_at'])); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <p class="inquiry-reply-text"><?php echo nl2br(htmlspecialchars($inq['admin_reply'])); ?></p>
+                            </div>
+                        <?php else: ?>
+                            <div class="inquiry-pending-box">
+                                ⏳ <em>Our team has received this and will review it shortly. Check back here for updates.</em>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
         <?php endif; ?>
     </section>
 

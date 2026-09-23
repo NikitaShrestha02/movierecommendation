@@ -48,14 +48,29 @@ if (strlen($search) < 2) {
         return $dot / (sqrt($norm1) * sqrt($norm2));
     }
 
-    $search_text = str_replace(" ", ",", $search);
+    $stmt = $conn->prepare("SELECT original_title, genres, keywords FROM movies WHERE original_title LIKE ? LIMIT 1");
+    $like_search = "%" . $search . "%";
+    $stmt->bind_param("s", $like_search);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $search_context = $search;
+    if ($res->num_rows > 0) {
+        $row = $res->fetch_assoc();
+        // If a movie matches, add its genres and keywords to the search context for better recommendations
+        $search_context .= "," . $row['genres'] . "," . $row['keywords'];
+    }
+    $stmt->close();
+
+    $search_text = str_replace(" ", ",", $search_context);
 
     $sql = "SELECT id, original_title, genres, keywords, poster_path FROM movies";
     $result = $conn->query($sql);
 
     $movies = [];
     while ($movie = $result->fetch_assoc()) {
-        $movie_text = $movie['genres'] . "," . $movie['keywords'];
+        // Include the title in the movie text so searching by title works
+        $movie_text = $movie['original_title'] . "," . $movie['genres'] . "," . $movie['keywords'];
         
         $shared_vocab = build_vocab($search_text, $movie_text);
         

@@ -14,6 +14,8 @@ include('connection.php');
 $totalMovies = 0;
 $totalUsers = 0;
 $totalRatings = 0;
+$totalInquiries = 0;
+$unreadInquiries = 0;
 
 $mRes = mysqli_query($conn, "SELECT COUNT(*) AS cnt FROM movies");
 if ($mRes) $totalMovies = (int)mysqli_fetch_assoc($mRes)['cnt'];
@@ -24,11 +26,20 @@ if ($uRes) $totalUsers = (int)mysqli_fetch_assoc($uRes)['cnt'];
 $rRes = mysqli_query($conn, "SELECT COUNT(*) AS cnt FROM watched_movies WHERE rating IS NOT NULL");
 if ($rRes) $totalRatings = (int)mysqli_fetch_assoc($rRes)['cnt'];
 
+$iRes = mysqli_query($conn, "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'unread' THEN 1 ELSE 0 END) AS unread FROM contact_inquiries");
+if ($iRes && $iRow = mysqli_fetch_assoc($iRes)) {
+    $totalInquiries = (int)$iRow['total'];
+    $unreadInquiries = (int)($iRow['unread'] ?? 0);
+}
+
 // Fetch 5 latest movies
 $latestMovies = mysqli_query($conn, "SELECT id, original_title, release_date, poster_path FROM movies ORDER BY release_date DESC LIMIT 5");
 
 // Fetch 5 latest users
 $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user ORDER BY id DESC LIMIT 5");
+
+// Fetch 5 latest inquiries
+$latestInquiries = mysqli_query($conn, "SELECT id, name, email, subject, status, created_at FROM contact_inquiries ORDER BY created_at DESC LIMIT 5");
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -354,6 +365,19 @@ $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user OR
             </div>
         </div>
 
+        <div class="stat-card">
+            <div class="stat-icon">📬</div>
+            <div>
+                <div class="stat-value">
+                    <?php echo $totalInquiries; ?>
+                    <?php if ($unreadInquiries > 0): ?>
+                        <span style="font-size:11px; color:#fbbf24; font-weight:700; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); padding:2px 6px; border-radius:4px; vertical-align:middle;"><?php echo $unreadInquiries; ?> Unread</span>
+                    <?php endif; ?>
+                </div>
+                <div class="stat-label">Inquiries &amp; Messages</div>
+            </div>
+        </div>
+
     </div>
 
     <!-- Action Shortcuts -->
@@ -380,6 +404,14 @@ $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user OR
                 <p>Review registered member details, addresses, contacts, and account statuses.</p>
             </div>
             <a href="shu.php" class="action-link">Manage User Accounts &rarr;</a>
+        </div>
+
+        <div class="action-card">
+            <div>
+                <h3>User Inquiries</h3>
+                <p>Read customer inquiries, movie suggestions, bug reports, and record replies.</p>
+            </div>
+            <a href="admin_inquiries.php" class="action-link">Manage Inquiries &rarr;</a>
         </div>
 
     </div>
@@ -450,6 +482,76 @@ $latestUsers = mysqli_query($conn, "SELECT id, name, email, contact FROM user OR
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Recent Inquiries Section -->
+    <div style="margin-top: 24px;">
+        <div class="preview-panel">
+            <div class="panel-header">
+                <div>
+                    <h2 class="panel-title" style="display:inline-block; margin-right:8px;">Recent Inquiries &amp; Messages</h2>
+                    <?php if ($unreadInquiries > 0): ?>
+                        <span style="font-size:11px; font-weight:700; color:#fbbf24; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); padding:2px 7px; border-radius:4px;"><?php echo $unreadInquiries; ?> unread</span>
+                    <?php endif; ?>
+                </div>
+                <a href="admin_inquiries.php" class="panel-viewall">Manage all inquiries &rarr;</a>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Ref ID</th>
+                            <th>Sender</th>
+                            <th>Subject</th>
+                            <th>Status</th>
+                            <th>Received</th>
+                            <th style="text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if ($latestInquiries && mysqli_num_rows($latestInquiries) > 0): ?>
+                            <?php while ($inq = mysqli_fetch_assoc($latestInquiries)): ?>
+                                <tr>
+                                    <td style="font-family:monospace; font-weight:700; color:#60a5fa;">
+                                        #INQ-<?php echo str_pad($inq['id'], 4, '0', STR_PAD_LEFT); ?>
+                                    </td>
+                                    <td>
+                                        <strong><?php echo htmlspecialchars($inq['name']); ?></strong>
+                                        <div style="font-size:12px; color:#94a3b8;"><?php echo htmlspecialchars($inq['email']); ?></div>
+                                    </td>
+                                    <td>
+                                        <span style="background:#131924; border:1px solid #283449; padding:2px 7px; border-radius:4px; font-size:11px; font-weight:600;">
+                                            <?php echo htmlspecialchars($inq['subject']); ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <?php if ($inq['status'] === 'unread'): ?>
+                                            <span style="color:#fbbf24; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); padding:2px 6px; border-radius:4px; font-size:11px; font-weight:700;">UNREAD</span>
+                                        <?php elseif ($inq['status'] === 'in_progress'): ?>
+                                            <span style="color:#60a5fa; background:rgba(59,130,246,0.15); border:1px solid rgba(59,130,246,0.3); padding:2px 6px; border-radius:4px; font-size:11px; font-weight:700;">IN PROGRESS</span>
+                                        <?php else: ?>
+                                            <span style="color:#34d399; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.3); padding:2px 6px; border-radius:4px; font-size:11px; font-weight:700;">RESOLVED</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td style="color:#94a3b8; font-size:12px; white-space:nowrap;">
+                                        <?php echo date('M d, Y', strtotime($inq['created_at'])); ?>
+                                    </td>
+                                    <td style="text-align: right;">
+                                        <a href="admin_inquiries.php?q=<?php echo urlencode($inq['email']); ?>" style="color:#60a5fa; text-decoration:none; font-size:12.5px; font-weight:600;">
+                                            View &rarr;
+                                        </a>
+                                    </td>
+                                </tr>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="6" style="text-align:center; color:#64748b; padding:20px;">No inquiries received yet.</td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>

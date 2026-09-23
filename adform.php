@@ -306,7 +306,7 @@ if (isset($_POST['submit'])) {
         <form id="loginForm" method="post">
             <div class="form-group">
                 <label for="email" class="form-label">Administrator Email</label>
-                <input type="text" id="email" name="email" class="form-control" placeholder="snadmin@gmail.com" required autocomplete="username">
+                <input type="text" id="email" name="email" class="form-control" placeholder="example@gmail.com" required autocomplete="username">
             </div>
 
             <div class="form-group">

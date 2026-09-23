@@ -8,20 +8,83 @@ if (!isset($_SESSION['uemail']) && isset($_COOKIE['uemail'])) {
     $_SESSION['uemail'] = $_COOKIE['uemail'];
 }
 
+require_once('connection.php');
+
 $userEmail = $_SESSION['uemail'] ?? '';
+$userName = '';
+$userId = null;
+
+// Look up current user details if logged in
+if (!empty($userEmail)) {
+    $uStmt = $conn->prepare("SELECT id, name FROM user WHERE email = ?");
+    if ($uStmt) {
+        $uStmt->bind_param("s", $userEmail);
+        $uStmt->execute();
+        $uRes = $uStmt->get_result();
+        if ($uRow = $uRes->fetch_assoc()) {
+            $userId = (int)$uRow['id'];
+            $userName = $uRow['name'] ?? '';
+        }
+        $uStmt->close();
+    }
+}
+
 $successMessage = '';
 $errorMessage = '';
+$postName = $userName;
+$postSubject = 'General Inquiry';
+$postMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
+    $name = trim($_POST['name'] ?? $userName);
     $email = trim($_POST['email'] ?? $userEmail);
     $subject = trim($_POST['subject'] ?? 'General Inquiry');
     $message = trim($_POST['message'] ?? '');
 
+    $postName = $name;
+    $postSubject = $subject;
+    $postMessage = $message;
+
     if (empty($message)) {
         $errorMessage = "Please enter your message before sending.";
+    } elseif (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errorMessage = "Please enter a valid email address.";
     } else {
-        $successMessage = "Thank you" . (!empty($name) ? ", " . htmlspecialchars($name) : "") . "! Your message has been sent successfully. We will get back to you at " . htmlspecialchars($email) . " shortly.";
+        $inStmt = $conn->prepare("INSERT INTO contact_inquiries (user_id, name, email, subject, message) VALUES (?, ?, ?, ?, ?)");
+        if ($inStmt) {
+            $inStmt->bind_param("issss", $userId, $name, $email, $subject, $message);
+            if ($inStmt->execute()) {
+                $inqId = $conn->insert_id;
+                $refCode = '#INQ-' . str_pad($inqId, 4, '0', STR_PAD_LEFT);
+
+                // Category-tailored response
+                switch ($subject) {
+                    case 'Movie Request':
+                        $catNote = "Your movie request has been logged! Our content team evaluates requests regularly to expand our collection.";
+                        break;
+                    case 'Recommendation Feedback':
+                        $catNote = "Thank you! Your feedback helps us fine-tune our recommendation engine and KNN weights.";
+                        break;
+                    case 'Bug Report':
+                        $catNote = "Thank you for alerting us! Our technical team is reviewing this and will investigate promptly.";
+                        break;
+                    default:
+                        $catNote = "Your inquiry has been received. Our team typically responds within 24 to 48 hours.";
+                        break;
+                }
+
+                $displayName = !empty($name) ? htmlspecialchars($name) : 'there';
+                $successMessage = "<strong>Thank you, " . $displayName . "!</strong> " . $catNote . "<br><span style='font-size:12.5px; opacity:0.9;'>Tracking Reference: <strong>" . $refCode . "</strong> &bull; Sent to: <em>" . htmlspecialchars($email) . "</em></span>";
+                
+                // Clear message field after successful submit
+                $postMessage = '';
+            } else {
+                $errorMessage = "Database error: Could not record your inquiry. Please try again.";
+            }
+            $inStmt->close();
+        } else {
+            $errorMessage = "Unable to process inquiry at this moment. Please try again later.";
+        }
     }
 }
 ?>
@@ -358,27 +421,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <form action="contact.php" method="POST">
                 <div class="form-group">
                     <label class="form-label" for="name">Your Name</label>
-                    <input type="text" id="name" name="name" class="form-control" placeholder="Enter your full name">
+                    <input type="text" id="name" name="name" class="form-control" placeholder="Enter your full name" value="<?php echo htmlspecialchars($postName); ?>">
                 </div>
 
                 <div class="form-group">
                     <label class="form-label" for="email">Email Address</label>
-                    <input type="email" id="email" name="email" class="form-control" value="<?php echo htmlspecialchars($userEmail); ?>" required>
+                    <input type="email" id="email" name="email" class="form-control" value="<?php echo htmlspecialchars($email ?? $userEmail); ?>" required>
                 </div>
 
                 <div class="form-group">
                     <label class="form-label" for="subject">Subject</label>
                     <select id="subject" name="subject" class="form-control">
-                        <option value="General Inquiry">General Inquiry</option>
-                        <option value="Recommendation Feedback">Recommendation Feedback</option>
-                        <option value="Bug Report">Bug Report</option>
-                        <option value="Movie Request">Movie Request</option>
+                        <option value="General Inquiry" <?php echo ($postSubject === 'General Inquiry') ? 'selected' : ''; ?>>General Inquiry</option>
+                        <option value="Recommendation Feedback" <?php echo ($postSubject === 'Recommendation Feedback') ? 'selected' : ''; ?>>Recommendation Feedback</option>
+                        <option value="Bug Report" <?php echo ($postSubject === 'Bug Report') ? 'selected' : ''; ?>>Bug Report</option>
+                        <option value="Movie Request" <?php echo ($postSubject === 'Movie Request') ? 'selected' : ''; ?>>Movie Request</option>
                     </select>
                 </div>
 
                 <div class="form-group">
                     <label class="form-label" for="message">Message</label>
-                    <textarea id="message" name="message" class="form-control" placeholder="Write your query or feedback here..." required></textarea>
+                    <textarea id="message" name="message" class="form-control" placeholder="Write your query or feedback here..." required><?php echo htmlspecialchars($postMessage); ?></textarea>
                 </div>
 
                 <button type="submit" class="btn-submit">Send Message</button>

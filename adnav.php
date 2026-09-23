@@ -219,6 +219,14 @@ if (!empty($_SESSION['just_logged_in'])) {
     $adLoginToast = $_SESSION['just_logged_in'];
     unset($_SESSION['just_logged_in']);
 }
+
+$adUnreadInquiries = 0;
+if (isset($conn) && $conn instanceof mysqli) {
+    $unqRes = @$conn->query("SELECT COUNT(*) AS c FROM contact_inquiries WHERE status = 'unread'");
+    if ($unqRes && $unqRow = $unqRes->fetch_assoc()) {
+        $adUnreadInquiries = (int)$unqRow['c'];
+    }
+}
 ?>
 
 <header class="admin-header">
@@ -233,6 +241,14 @@ if (!empty($_SESSION['just_logged_in'])) {
             <li><a href="nowshowingform.php">Add Movie</a></li>
             <li><a href="shownow.php">Manage Movies</a></li>
             <li><a href="shu.php">Manage Users</a></li>
+            <li>
+                <a href="admin_inquiries.php">
+                    Inquiries
+                    <?php if ($adUnreadInquiries > 0): ?>
+                        <span style="display:inline-block; background-color:#ef4444; color:#fff; font-size:10px; font-weight:700; border-radius:10px; padding:1px 6px; margin-left:4px; vertical-align:middle; line-height:1.2;"><?php echo $adUnreadInquiries; ?></span>
+                    <?php endif; ?>
+                </a>
+            </li>
             <li><a href="index.php" target="_blank" class="btn-viewsite">View Site &rarr;</a></li>
             <li><a href="logout.php" class="btn-logout">Logout</a></li>
         </ul>

@@ -53,11 +53,15 @@ try {
 
         echo '<div class="movie-poster">
                 <img src="' . htmlspecialchars($posterPath) . '" alt="' . htmlspecialchars($movie['original_title']) . '">
-                <div class="overlay">
-                    <button class="' . ($movie['status'] == 'Released' ? 'book-now' : 'coming-soon') . '">
-                        ' . ($movie['status'] == 'Released' ? 'Book Now' : 'Coming Soon') . '
-                    </button>
-                </div>
+                <div class="overlay">';
+                
+        if ($movie['status'] == 'Released') {
+            echo '<a href="details.php?id=' . urlencode($movie['id']) . '" class="show-details">Show Details</a>';
+        } else {
+            echo '<button class="coming-soon">Coming Soon</button>';
+        }
+
+        echo '</div>
                 <div class="movie-title">' . htmlspecialchars($movie['original_title']) . '</div>
               </div>';
     }
